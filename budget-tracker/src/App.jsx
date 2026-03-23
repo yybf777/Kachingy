@@ -1,5 +1,12 @@
 import { useState, useEffect } from "react";
 
+// Load Tesseract.js for OCR
+if (typeof window !== "undefined" && !window.Tesseract) {
+  const s = document.createElement("script");
+  s.src = "https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js";
+  document.head.appendChild(s);
+}
+
 const STORAGE_KEY = "budget-tracker-v2";
 
 const DETAILED_CATEGORIES = {
@@ -88,6 +95,8 @@ export default function App() {
   const [sortAsc, setSortAsc] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ type:"expense", amount:"", category:"", note:"", date:new Date().toISOString().slice(0,10), fromFunFund:false });
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrPreview, setOcrPreview] = useState(null);
   const [budgetInput, setBudgetInput] = useState(data.budget||"");
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
@@ -266,7 +275,48 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
   }
-  function addRec(item) { upd({ recurring:[...(data.recurring||[]),{...item,id:Date.now()}] }); }
+  async function handleOCR(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setOcrLoading(true);
+    setOcrPreview(URL.createObjectURL(file));
+    try {
+      const Tesseract = window.Tesseract;
+      if (!Tesseract) { alert("OCR 组件还在加载，请稍后再试"); setOcrLoading(false); return; }
+      const { data: { text } } = await Tesseract.recognize(file, "chi_sim+eng", {});
+
+      // 提取金额 — 匹配 ¥XX.XX 或 付款金额 XX.XX
+      const amtMatch = text.match(/[¥￥]\s*(\d+\.?\d*)/)||text.match(/(?:付款|实付|金额|合计)[^\d]*(\d+\.?\d*)/);
+      const amount = amtMatch ? amtMatch[1] : "";
+
+      // 提取日期
+      const dateMatch = text.match(/(\d{4})[-./年](\d{1,2})[-./月](\d{1,2})/);
+      const date = dateMatch
+        ? `${dateMatch[1]}-${String(dateMatch[2]).padStart(2,"0")}-${String(dateMatch[3]).padStart(2,"0")}`
+        : new Date().toISOString().slice(0,10);
+
+      // 猜测分类
+      const lower = text.toLowerCase();
+      let category = "其他";
+      if (/餐|饭|吃|外卖|奶茶|咖啡|火锅|烧烤|面|饮|食/.test(text)) category="餐饮";
+      else if (/滴滴|打车|地铁|公交|高铁|火车|机票|交通|加油/.test(text)) category="交通";
+      else if (/超市|购物|淘宝|京东|拼多多|商场|服装/.test(text)) category="购物";
+      else if (/电影|游戏|娱乐|ktv|演唱会/.test(lower)) category="娱乐";
+      else if (/医院|药|诊|健康/.test(text)) category="医疗";
+      else if (/房租|水电|物业|居住/.test(text)) category="居住";
+      else if (/学费|课|书|教育|培训/.test(text)) category="教育";
+
+      // 提取备注（商家名）
+      const noteMatch = text.match(/(?:收款方|商家|向)[：:]\s*(.{2,15})/);
+      const note = noteMatch ? noteMatch[1].trim() : "";
+
+      setForm(f=>({...f, amount, category, note, date, type:"expense"}));
+    } catch(err) {
+      console.error(err);
+    }
+    setOcrLoading(false);
+    e.target.value="";
+  }
   function delRec(id) { upd({ recurring:data.recurring.filter(r=>r.id!==id) }); }
   function addGoal(g) { upd({ goals:[...(data.goals||[]),{...g,id:Date.now(),saved:parseFloat(g.saved)||0}] }); }
   function delGoal(id) { upd({ goals:data.goals.filter(g=>g.id!==id) }); }
@@ -313,6 +363,10 @@ export default function App() {
   const maxCatVal=Math.max(...Object.keys(catTotals).map(c=>Math.max(catTotals[c], effectiveCatBudgets[c]||0)),1);
   const sortedEntries=[...monthEntries].sort((a,b)=>sortAsc?a.date.localeCompare(b.date):b.date.localeCompare(a.date));
 
+  // 奶茶🧀 深夜💵 抹茶🍀 樱粉🎀 薰衣草💜 天空🦋
+  const THEME_EMOJIS = ["🧀","💵","🍀","🎀","💜","🦋"];
+  const fundEmoji = data.theme === -1 ? (sysDark ? "💵" : "🧀") : (THEME_EMOJIS[data.theme] || "💰");
+
   const FAB_POSITIONS = {
     "left-top":    { top:60,    left:20,   bottom:"auto", right:"auto" },
     "left-middle": { top:"50%", left:20,   bottom:"auto", right:"auto", transform:"translateY(-50%)" },
@@ -354,7 +408,6 @@ export default function App() {
 
     /* fun fund */
     .ffc{margin:0 24px 20px;background:linear-gradient(135deg,${T.accent}22,${T.accent}0a);border-radius:22px;padding:20px;border:1.5px solid ${T.accent}25;position:relative;overflow:hidden;}
-    .ffc::after{content:'🎀';position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:2rem;opacity:.35;}
     .ffl{font-size:.65rem;letter-spacing:.16em;color:${T.accent};opacity:.8;text-transform:uppercase;margin-bottom:6px;font-weight:600;}
     .ffa{font-family:'Kaisei Opti',serif;font-size:2.2rem;color:${T.accent};}
 
@@ -511,7 +564,11 @@ export default function App() {
               </div>
             </div>
           )}
-          {data.funFund>0 && <div className="ffc"><div className="ffl">🎉 娱乐基金</div><div className="ffa">¥{data.funFund.toFixed(2)}</div></div>}
+          {data.funFund>0 && <div className="ffc">
+            <div className="ffl">🎉 娱乐基金</div>
+            <div className="ffa">¥{data.funFund.toFixed(2)}</div>
+            <span style={{position:"absolute",right:16,top:"50%",transform:"translateY(-50%)",fontSize:"2rem",opacity:.35}}>{fundEmoji}</span>
+          </div>}
           {Object.keys(catTotals).length>0 && <div className="cb">
             <div className="stit">分类支出{data.budget>0?" vs 预算":""}</div>
             {Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([c,actual])=>{
@@ -849,9 +906,19 @@ export default function App() {
 
         <button className="fab" style={fabStyle} onClick={()=>tab==="goals"?setShowAddGoal(true):setShowAdd(true)}>＋</button>
 
-        {showAdd&&<div className="ov" onClick={e=>e.target===e.currentTarget&&setShowAdd(false)}>
+        {showAdd&&<div className="ov" onClick={e=>{if(e.target===e.currentTarget){setShowAdd(false);setOcrPreview(null);}}}>
           <div className="mo">
             <div className="mt">记一笔</div>
+            <label style={{display:"flex",alignItems:"center",gap:10,background:T.accent+"12",border:`1.5px solid ${T.accent}30`,borderRadius:16,padding:"11px 16px",marginBottom:18,cursor:"pointer"}}>
+              <span style={{fontSize:"1.2rem"}}>📷</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:".85rem",fontWeight:500,color:T.accent}}>识图记账</div>
+                <div style={{fontSize:".65rem",opacity:.45,marginTop:1}}>上传支付截图自动识别金额</div>
+              </div>
+              {ocrLoading && <span style={{fontSize:".75rem",opacity:.5}}>识别中…</span>}
+              <input type="file" accept="image/*" style={{display:"none"}} onChange={handleOCR} disabled={ocrLoading}/>
+            </label>
+            {ocrPreview && <img src={ocrPreview} style={{width:"100%",borderRadius:12,marginBottom:14,maxHeight:160,objectFit:"cover",opacity:.7}}/>}
             <div className="tt">
               <button className={`tb${form.type==="expense"?" active":""}`} onClick={()=>setForm(f=>({...f,type:"expense",category:""}))}>支出</button>
               <button className={`tb${form.type==="income"?" active":""}`} onClick={()=>setForm(f=>({...f,type:"income",category:""}))}>收入</button>
