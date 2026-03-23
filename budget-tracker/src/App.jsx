@@ -73,7 +73,7 @@ function parseAlipay(wb, XLSX) {
 }
 
 function defaults() {
-  return { entries:[], budget:0, theme:0, mode:"detailed", funFund:0, goals:[], recurring:[], yearGoal:null, catBudgets:{} };
+  return { entries:[], budget:0, theme:0, mode:"detailed", funFund:0, goals:[], recurring:[], yearGoal:null, catBudgets:{}, fabPos:"right-bottom" };
 }
 function loadData() {
   try { const r=localStorage.getItem(STORAGE_KEY); if (r) return {...defaults(),...JSON.parse(r)}; } catch {}
@@ -213,8 +213,17 @@ export default function App() {
     setImporting(true); setImportResult(null);
     try {
       const buf=await file.arrayBuffer();
-      const wb=XL.read(buf,{type:"array",cellDates:true});
       const name=file.name.toLowerCase();
+      const isCSV=name.endsWith(".csv");
+      // CSV用GBK编码读取（支付宝导出格式）
+      let wb;
+      if (isCSV) {
+        const decoder=new TextDecoder("gbk");
+        const text=decoder.decode(buf);
+        wb=XL.read(text,{type:"string",cellDates:true});
+      } else {
+        wb=XL.read(buf,{type:"array",cellDates:true});
+      }
       let parsed=name.includes("微信")||name.includes("wechat")?parseWechat(wb,XL):parseAlipay(wb,XL);
       if (!parsed.length) parsed=parseWechat(wb,XL);
       if (!parsed.length) { setImportResult({ok:false,msg:"未识别到有效记录"}); }
@@ -228,7 +237,27 @@ export default function App() {
     setImporting(false); e.target.value="";
   }
 
-  function addRec(item) { upd({ recurring:[...(data.recurring||[]),{...item,id:Date.now()}] }); }
+  function exportCSV() {
+    const headers = ["日期","类型","分类","金额","备注"];
+    const rows = [...data.entries]
+      .sort((a,b)=>b.date.localeCompare(a.date))
+      .map(e=>[
+        e.date,
+        e.type==="expense"?"支出":"收入",
+        e.category,
+        e.amount.toFixed(2),
+        e.note||""
+      ]);
+    const csv = [headers,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const bom = "\uFEFF";
+    const encoded = encodeURIComponent(bom+csv);
+    const a = document.createElement("a");
+    a.href = `data:text/csv;charset=utf-8,${encoded}`;
+    a.download = `Kachingy_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
   function delRec(id) { upd({ recurring:data.recurring.filter(r=>r.id!==id) }); }
   function addGoal(g) { upd({ goals:[...(data.goals||[]),{...g,id:Date.now(),saved:parseFloat(g.saved)||0}] }); }
   function delGoal(id) { upd({ goals:data.goals.filter(g=>g.id!==id) }); }
@@ -273,8 +302,17 @@ export default function App() {
   }
   const effectiveCatBudgets=getEffectiveCatBudgets();
   const maxCatVal=Math.max(...Object.keys(catTotals).map(c=>Math.max(catTotals[c], effectiveCatBudgets[c]||0)),1);
-
   const sortedEntries=[...monthEntries].sort((a,b)=>sortAsc?a.date.localeCompare(b.date):b.date.localeCompare(a.date));
+
+  const FAB_POSITIONS = {
+    "left-top":    { top:60,    left:20,   bottom:"auto", right:"auto" },
+    "left-middle": { top:"50%", left:20,   bottom:"auto", right:"auto", transform:"translateY(-50%)" },
+    "left-bottom": { bottom:96, left:20,   top:"auto",    right:"auto" },
+    "right-top":   { top:60,    right:20,  bottom:"auto", left:"auto" },
+    "right-middle":{ top:"50%", right:20,  bottom:"auto", left:"auto",  transform:"translateY(-50%)" },
+    "right-bottom":{ bottom:96, right:20,  top:"auto",    left:"auto" },
+  };
+  const fabStyle = FAB_POSITIONS[data.fabPos||"right-bottom"];
 
   const T=theme;
   const css=`
@@ -337,7 +375,7 @@ export default function App() {
     .ni{font-size:1.2rem;}
 
     /* fab */
-    .fab{position:fixed;bottom:24px;right:calc(50% - 191px + 16px);width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,${T.accent},${T.accent}cc);border:none;color:#fff;font-size:1.4rem;cursor:pointer;box-shadow:0 4px 18px ${T.accent}55;display:flex;align-items:center;justify-content:center;transition:transform .15s;}
+    .fab{position:fixed;width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,${T.accent},${T.accent}cc);border:none;color:#fff;font-size:1.4rem;cursor:pointer;box-shadow:0 4px 18px ${T.accent}55;display:flex;align-items:center;justify-content:center;transition:transform .15s;z-index:50;}
     .fab:active{transform:scale(.92);}
 
     /* modal */
@@ -718,9 +756,17 @@ export default function App() {
               <div style={{fontSize:".82rem",opacity:.5,marginBottom:12}}>支持微信/支付宝导出的 xlsx 格式账单</div>
               <label className="ib">
                 {!xlsxReady?"加载中…":importing?"解析中…":"📂 选择账单文件"}
-                <input type="file" accept=".xlsx,.xls" onChange={handleImport} style={{display:"none"}} disabled={importing||!xlsxReady}/>
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImport} style={{display:"none"}} disabled={importing||!xlsxReady}/>
               </label>
+              <div style={{fontSize:".72rem",opacity:.38,marginTop:8}}>支持微信/支付宝的 xlsx、xls、csv 格式</div>
               {importResult&&<div className={`ir${importResult.ok?" ok":" err"}`}>{importResult.ok?"✓ ":"✗ "}{importResult.msg}</div>}
+              <div style={{marginTop:12,borderTop:`1px solid ${T.text}08`,paddingTop:12}}>
+                <div style={{fontSize:".75rem",opacity:.45,marginBottom:8}}>导出全部记录为 CSV 文件</div>
+                <button className="ib" onClick={exportCSV} disabled={!data.entries.length}
+                  style={{opacity:data.entries.length?1:.4}}>
+                  📤 导出账单
+                </button>
+              </div>
             </div>
           </div>
           <div className="ss">
@@ -735,6 +781,26 @@ export default function App() {
               {(data.funFund||0)>0&&<button className="ib" style={{marginTop:12,background:"#d4688a18",borderColor:"#d4688a40",color:"#d4688a"}} onClick={()=>upd({funFund:0})}>清零基金</button>}
             </div>
           </div>
+          <div className="ss">
+            <div className="ss-t">➕ 按钮位置</div>
+            <div className="sc">
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[
+                  ["left-top","左上"],["right-top","右上"],
+                  ["left-middle","左中"],["right-middle","右中"],
+                  ["left-bottom","左下"],["right-bottom","右下"],
+                ].map(([pos,label])=>(
+                  <button key={pos} onClick={()=>upd({fabPos:pos})}
+                    style={{padding:"10px",borderRadius:12,border:`1.5px solid ${data.fabPos===pos?T.accent:T.text+"15"}`,
+                      background:data.fabPos===pos?`${T.accent}18`:"transparent",
+                      color:data.fabPos===pos?T.accent:T.text,fontWeight:data.fabPos===pos?600:400,
+                      cursor:"pointer",fontSize:".85rem",transition:"all .15s"}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>}
 
         <nav className="nav">
@@ -745,7 +811,7 @@ export default function App() {
           ))}
         </nav>
 
-        <button className="fab" onClick={()=>tab==="goals"?setShowAddGoal(true):setShowAdd(true)}>＋</button>
+        <button className="fab" style={fabStyle} onClick={()=>tab==="goals"?setShowAddGoal(true):setShowAdd(true)}>＋</button>
 
         {showAdd&&<div className="ov" onClick={e=>e.target===e.currentTarget&&setShowAdd(false)}>
           <div className="mo">
