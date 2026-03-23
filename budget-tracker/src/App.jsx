@@ -99,6 +99,7 @@ export default function App() {
   const [editGoalId, setEditGoalId] = useState(null);
   const [depositId, setDepositId] = useState(null);
   const [depositAmt, setDepositAmt] = useState("");
+  const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0,7));
   const [showYearGoal, setShowYearGoal] = useState(false);
   const [yearGoalForm, setYearGoalForm] = useState({ target:"", items:[] });
   const [yearGoalItem, setYearGoalItem] = useState({ name:"", amount:"" });
@@ -238,8 +239,12 @@ export default function App() {
   }
 
   function exportCSV() {
+    const filtered = exportMonth === "all"
+      ? [...data.entries]
+      : data.entries.filter(e => e.date.startsWith(exportMonth));
+    if (!filtered.length) return;
     const headers = ["日期","类型","分类","金额","备注"];
-    const rows = [...data.entries]
+    const rows = filtered
       .sort((a,b)=>b.date.localeCompare(a.date))
       .map(e=>[
         e.date,
@@ -251,9 +256,12 @@ export default function App() {
     const csv = [headers,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const bom = "\uFEFF";
     const encoded = encodeURIComponent(bom+csv);
+    const filename = exportMonth === "all"
+      ? `Kachingy_全部.csv`
+      : `Kachingy_${exportMonth}.csv`;
     const a = document.createElement("a");
     a.href = `data:text/csv;charset=utf-8,${encoded}`;
-    a.download = `Kachingy_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -761,11 +769,37 @@ export default function App() {
               <div style={{fontSize:".72rem",opacity:.38,marginTop:8}}>支持微信/支付宝的 xlsx、xls、csv 格式</div>
               {importResult&&<div className={`ir${importResult.ok?" ok":" err"}`}>{importResult.ok?"✓ ":"✗ "}{importResult.msg}</div>}
               <div style={{marginTop:12,borderTop:`1px solid ${T.text}08`,paddingTop:12}}>
-                <div style={{fontSize:".75rem",opacity:.45,marginBottom:8}}>导出全部记录为 CSV 文件</div>
-                <button className="ib" onClick={exportCSV} disabled={!data.entries.length}
-                  style={{opacity:data.entries.length?1:.4}}>
-                  📤 导出账单
-                </button>
+                <div style={{fontSize:".75rem",opacity:.45,marginBottom:8}}>导出账单为 CSV 文件</div>
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+                  <select value={exportMonth==="all"?"all":exportMonth.slice(0,4)}
+                    onChange={e=>{
+                      if(e.target.value==="all"){setExportMonth("all");}
+                      else{
+                        const months=[...new Set(data.entries.map(en=>en.date.slice(0,7)).filter(m=>m.startsWith(e.target.value)))].sort((a,b)=>b.localeCompare(a));
+                        setExportMonth(months[0]||e.target.value+"-01");
+                      }
+                    }}
+                    style={{flex:1,background:T.bg,border:"none",borderRadius:12,padding:"8px 12px",fontSize:".85rem",color:T.text,outline:"none"}}>
+                    <option value="all">全部</option>
+                    {[...new Set(data.entries.map(e=>e.date.slice(0,4)))].sort((a,b)=>b.localeCompare(a)).map(y=>(
+                      <option key={y} value={y}>{y}年</option>
+                    ))}
+                  </select>
+                  {exportMonth!=="all" && (
+                    <select value={exportMonth}
+                      onChange={e=>setExportMonth(e.target.value)}
+                      style={{flex:1,background:T.bg,border:"none",borderRadius:12,padding:"8px 12px",fontSize:".85rem",color:T.text,outline:"none"}}>
+                      {[...new Set(data.entries.map(en=>en.date.slice(0,7)).filter(m=>m.startsWith(exportMonth.slice(0,4))))].sort((a,b)=>b.localeCompare(a)).map(m=>(
+                        <option key={m} value={m}>{m.slice(5)}月</option>
+                      ))}
+                    </select>
+                  )}
+                  <button className="ib" onClick={exportCSV}
+                    disabled={!data.entries.length}
+                    style={{opacity:data.entries.length?1:.4,whiteSpace:"nowrap"}}>
+                    📤 导出
+                  </button>
+                </div>
               </div>
             </div>
           </div>
