@@ -518,9 +518,10 @@ export default function App() {
               const budget=effectiveCatBudgets[c]||0;
               const over=actual-budget;
               const withinAmt=budget>0 ? Math.min(actual,budget) : actual;
-              const withinPct=(withinAmt/maxCatVal)*100;
-              const overPct=over>0 ? (over/maxCatVal)*100 : 0;
-              const budgetPct=budget>0 ? (budget/maxCatVal)*100 : 0;
+              const totalPct=Math.min(100,(actual/maxCatVal)*100);
+              const withinPct=budget>0 ? (withinAmt/actual)*totalPct : totalPct;
+              const overPct=over>0 ? totalPct-withinPct : 0;
+              const budgetPct=budget>0 ? Math.min(100,(budget/maxCatVal)*100) : 0;
               return (
                 <div key={c} style={{marginBottom:14}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5}}>
@@ -532,7 +533,7 @@ export default function App() {
                       {!budget && <span>¥{actual.toFixed(2)}</span>}
                     </span>
                   </div>
-                  <div style={{height:10,borderRadius:99,background:T.text+"10",overflow:"visible",position:"relative",display:"flex"}}>
+                  <div style={{height:10,borderRadius:99,background:T.text+"10",overflow:"hidden",position:"relative",display:"flex"}}>
                     {/* 预算内绿色段 */}
                     <div style={{width:`${withinPct}%`,height:"100%",background:over>0?"#5a9e72":""+T.accent,borderRadius:over>0?"99px 0 0 99px":"99px",transition:"width .4s",flexShrink:0}}/>
                     {/* 超出红色段 */}
