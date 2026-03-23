@@ -275,48 +275,109 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
   }
-  async function handleOCR(e) {
+    async function handleOCR(e) {
     const file = e.target.files[0];
     if (!file) return;
     setOcrLoading(true);
     setOcrPreview(URL.createObjectURL(file));
+    e.target.value = "";
     try {
       const Tesseract = window.Tesseract;
-      if (!Tesseract) { alert("OCR 组件还在加载，请稍后再试"); setOcrLoading(false); return; }
+      if (!Tesseract) {
+        alert("OCR 组件还在加载，请稍后再试");
+        setOcrLoading(false);
+        return;
+      }
       const { data: { text } } = await Tesseract.recognize(file, "chi_sim+eng", {});
 
-      // 提取金额 — 匹配 ¥XX.XX 或 付款金额 XX.XX
-      const amtMatch = text.match(/[¥￥]\s*(\d+\.?\d*)/)||text.match(/(?:付款|实付|金额|合计)[^\d]*(\d+\.?\d*)/);
-      const amount = amtMatch ? amtMatch[1] : "";
+      // ── 退款检测：若页面含退款状态，直接提示并终止 ──────────────────
+      if (/已退款|退款成功|退款记录/.test(text)) {
+        alert("检测到退款记录，不计入支出。如需手动记录退款收入，请手动填写。");
+        setOcrLoading(false);
+        setOcrPreview(null);
+        return;
+      }
 
-      // 提取日期
-      const dateMatch = text.match(/(\d{4})[-./年](\d{1,2})[-./月](\d{1,2})/);
+      // ── 金额提取（三级优先级）─────────────────────────────────────────
+      // 优先级1：负号开头的金额（微信/支付宝账单详情页大字号格式）
+      //   例：-4.92  -23.45  - 2.01（负号与数字间有空格时也能匹配）
+      const negMatch = text.match(/-\s*(\d+\.\d{1,2})(?:\s|$)/);
+
+      // 优先级2：¥ 符号后跟数字（微信支付列表页格式，¥ 4.92）
+      const yenMatch = text.match(/[¥￥Y]\s*(\d+\.?\d*)/);
+
+      // 优先级3：关键词后跟金额
+      const keywordMatch = text.match(
+        /(?:付款|实付|金额|合计|订单金额|实际支付|应付|扣款|消费)[^\d]*(\d+\.?\d*)/
+      );
+
+      // 优先级4：兜底——找最大的 xx.xx 格式数字
+      //   排除明显不是金额的数字（如时间 10:48、编号 4301560102）
+      const allAmounts = [...text.matchAll(/(?<![:\d])(\d{1,6}\.\d{1,2})(?!\d)/g)]
+        .map(m => parseFloat(m[1]))
+        .filter(n => n >= 0.01 && n <= 99999);
+      const fallbackAmt = allAmounts.length
+        ? String(Math.max(...allAmounts))
+        : "";
+
+      const amount =
+        (negMatch && negMatch[1]) ||
+        (yenMatch && yenMatch[1]) ||
+        (keywordMatch && keywordMatch[1]) ||
+        fallbackAmt;
+
+      // ── 日期提取（支持两种格式）──────────────────────────────────────
+      // 微信：2026年3月23日  支付宝：2026-03-23  通用：2026/3/23
+      const dateMatch =
+        text.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/) ||
+        text.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
       const date = dateMatch
-        ? `${dateMatch[1]}-${String(dateMatch[2]).padStart(2,"0")}-${String(dateMatch[3]).padStart(2,"0")}`
-        : new Date().toISOString().slice(0,10);
+        ? `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, "0")}-${String(dateMatch[3]).padStart(2, "0")}`
+        : new Date().toISOString().slice(0, 10);
 
-      // 猜测分类
-      const lower = text.toLowerCase();
+      // ── 商户/商品名提取（用于备注和分类推断）────────────────────────
+      // 微信：金额大字上方单独一行是商户名；支付宝：「商品」字段后面
+      const merchantMatch =
+        text.match(/商品\s*[\n\r]+(.{2,15})/) ||   // 支付宝商品字段
+        text.match(/商户全称\s*[\n\r]+(.{2,15})/) || // 微信商户全称
+        text.match(/商家[\s\S]{0,4}([\u4e00-\u9fa5]{2,10})/); // 通用商家
+      const merchant = merchantMatch ? merchantMatch[1].trim() : "";
+
+      // ── 分类推断（结合全文和商户名）─────────────────────────────────
+      const fullContext = text + merchant;
       let category = "其他";
-      if (/餐|饭|吃|外卖|奶茶|咖啡|火锅|烧烤|面|饮|食/.test(text)) category="餐饮";
-      else if (/滴滴|打车|地铁|公交|高铁|火车|机票|交通|加油/.test(text)) category="交通";
-      else if (/超市|购物|淘宝|京东|拼多多|商场|服装/.test(text)) category="购物";
-      else if (/电影|游戏|娱乐|ktv|演唱会/.test(lower)) category="娱乐";
-      else if (/医院|药|诊|健康/.test(text)) category="医疗";
-      else if (/房租|水电|物业|居住/.test(text)) category="居住";
-      else if (/学费|课|书|教育|培训/.test(text)) category="教育";
+      if (/餐|饭|吃|外卖|奶茶|咖啡|火锅|烧烤|面|饮|食|快餐|食堂|小吃|麦当劳|肯德基|瑞幸|喜茶/.test(fullContext))
+        category = "餐饮";
+      else if (/滴滴|打车|地铁|公交|高铁|火车|机票|交通|加油|停车|出租|摩拜|哈啰|共享单车/.test(fullContext))
+        category = "交通";
+      else if (/超市|购物|淘宝|京东|拼多多|天猫|商场|服装|衣|鞋|包|美妆|化妆/.test(fullContext))
+        category = "购物";
+      else if (/电影|游戏|娱乐|ktv|演唱会|视频|音乐|爱奇艺|bilibili|b站/.test(fullContext.toLowerCase()))
+        category = "娱乐";
+      else if (/医院|药|诊|健康|挂号|检查|体检/.test(fullContext))
+        category = "医疗";
+      else if (/房租|水电|物业|居住|燃气|宽带/.test(fullContext))
+        category = "居住";
+      else if (/学费|课|书|教育|培训|考试|邮电大学|洗澡|洗衣|饮水|校园/.test(fullContext))
+        category = "教育";
 
-      // 提取备注（商家名）
-      const noteMatch = text.match(/(?:收款方|商家|向)[：:]\s*(.{2,15})/);
-      const note = noteMatch ? noteMatch[1].trim() : "";
+      // ── 填入表单 ──────────────────────────────────────────────────────
+      setForm(f => ({
+        ...f,
+        amount,
+        category,
+        note: merchant || f.note,
+        date,
+        type: "expense",
+      }));
 
-      setForm(f=>({...f, amount, category, note, date, type:"expense"}));
-    } catch(err) {
-      console.error(err);
+    } catch (err) {
+      console.error("OCR 识别失败", err);
+      alert("识别失败，请手动填写或重试");
     }
     setOcrLoading(false);
-    e.target.value="";
   }
+
   function delRec(id) { upd({ recurring:data.recurring.filter(r=>r.id!==id) }); }
   function addGoal(g) { upd({ goals:[...(data.goals||[]),{...g,id:Date.now(),saved:parseFloat(g.saved)||0}] }); }
   function delGoal(id) { upd({ goals:data.goals.filter(g=>g.id!==id) }); }
