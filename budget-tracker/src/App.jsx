@@ -378,6 +378,7 @@ export default function App() {
     setOcrLoading(false);
   }
 
+  function addRec(item) { upd({ recurring:[...(data.recurring||[]),{...item,id:Date.now()}] }); }
   function delRec(id) { upd({ recurring:data.recurring.filter(r=>r.id!==id) }); }
   function addGoal(g) { upd({ goals:[...(data.goals||[]),{...g,id:Date.now(),saved:parseFloat(g.saved)||0}] }); }
   function delGoal(id) { upd({ goals:data.goals.filter(g=>g.id!==id) }); }
