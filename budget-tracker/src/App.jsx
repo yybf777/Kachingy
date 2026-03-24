@@ -218,11 +218,107 @@ export default function App() {
     setOcrLoading(true);
     setOcrPreview(URL.createObjectURL(file));
     e.target.value = "";
-    // In artifact environment Tesseract CDN is blocked; show preview + manual fill hint
-    setTimeout(() => {
-      alert("识图记账在此预览环境中无法加载 OCR 引擎，请在正式网址上使用该功能。金额等字段请手动填写～");
-      setOcrLoading(false);
-    }, 300);
+    try {
+      const Tesseract = window.Tesseract;
+      if (!Tesseract) {
+        alert("OCR 组件还在加载，请稍后再试");
+        setOcrLoading(false);
+        return;
+      }
+      const { data: { text } } = await Tesseract.recognize(file, "chi_sim+eng", {});
+
+      // ── 退款检测 ──────────────────────────────────────────────────────
+      if (/已退款|退款成功|退款记录/.test(text)) {
+        alert("检测到退款记录，不计入支出。如需记录退款收入，请手动填写。");
+        setOcrLoading(false);
+        setOcrPreview(null);
+        return;
+      }
+
+      // ── 文本预处理：统一各种减号为标准负号 ──────────────────────────
+      // 微信账单详情用的是 U+2212 数学减号 −，以及全角 －，统一替换
+      const normalized = text
+        .replace(/−/g, "-")   // − 数学减号
+        .replace(/－/g, "-")   // － 全角减号
+        .replace(/—/g, "-")   // — 破折号（有时被误识别为负号）
+        .replace(/–/g, "-");       // – 连接号
+
+      // ── 金额提取（四级优先级）────────────────────────────────────────
+      // 优先级1：负号开头金额（微信/支付宝账单详情大字号，含全角减号处理后）
+      const negMatch = normalized.match(/-\s*(\d+\.\d{1,2})(?:\s|$)/);
+
+      // 优先级2：¥ 符号（含 Y、V 等 Tesseract 误识别）
+      const yenMatch = normalized.match(/[¥￥Yy]\s*(\d+\.\d{1,2})/);
+
+      // 优先级3：关键词后跟金额
+      const keywordMatch = normalized.match(
+        /(?:付款|实付|金额|合计|订单金额|实际支付|应付|扣款|消费)[^\d]*(\d+\.\d{1,2})/
+      );
+
+      // 优先级4：兜底——在排除时间戳、单号后，取最大的 xx.xx 格式数字
+      // 先把时间格式（10:23:35）和长数字串（交易单号）剔除
+      const cleaned = normalized
+        .replace(/\d{2}:\d{2}:\d{2}/g, "")          // 时间 17:23:35
+        .replace(/\d{8,}/g, "")                       // 8位以上长数字串（单号）
+        .replace(/\d{4}[-年]\d{1,2}[-月]\d{1,2}/g,""); // 日期
+      const allAmounts = [...cleaned.matchAll(/(?<![:\d])(\d{1,5}\.\d{1,2})(?!\d)/g)]
+        .map(m => parseFloat(m[1]))
+        .filter(n => n >= 0.01 && n <= 99999);
+      const fallbackAmt = allAmounts.length ? String(Math.max(...allAmounts)) : "";
+
+      const amount =
+        (negMatch  && negMatch[1])  ||
+        (yenMatch  && yenMatch[1])  ||
+        (keywordMatch && keywordMatch[1]) ||
+        fallbackAmt;
+
+      // ── 日期提取 ──────────────────────────────────────────────────────
+      const dateMatch =
+        normalized.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/) ||
+        normalized.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+      const date = dateMatch
+        ? `${dateMatch[1]}-${String(dateMatch[2]).padStart(2,"0")}-${String(dateMatch[3]).padStart(2,"0")}`
+        : new Date().toISOString().slice(0,10);
+
+      // ── 商户/商品名提取 ───────────────────────────────────────────────
+      const merchantMatch =
+        normalized.match(/商品[^\S\n]*\n(.{2,15})/) ||
+        normalized.match(/商户全称[^\S\n]*\n(.{2,15})/) ||
+        normalized.match(/商家.{0,4}([\u4e00-\u9fa5]{2,10})/);
+      const merchant = merchantMatch ? merchantMatch[1].trim() : "";
+
+      // ── 分类推断 ───────────────────────────────────────────────────────
+      const ctx = normalized + merchant;
+      let category = "其他";
+      if (/餐|饭|吃|外卖|奶茶|咖啡|火锅|烧烤|面|饮|食|快餐|食堂|小吃|麦当劳|肯德基|瑞幸|喜茶/.test(ctx))
+        category = "餐饮";
+      else if (/滴滴|打车|地铁|公交|高铁|火车|机票|交通|加油|停车|出租|摩拜|哈啰|共享单车/.test(ctx))
+        category = "交通";
+      else if (/超市|购物|淘宝|京东|拼多多|天猫|商场|服装|衣|鞋|包|美妆|化妆|图文|打印|复印/.test(ctx))
+        category = "购物";
+      else if (/电影|游戏|娱乐|ktv|演唱会|视频|音乐|爱奇艺|bilibili|b站/.test(ctx.toLowerCase()))
+        category = "娱乐";
+      else if (/医院|药|诊|健康|挂号|检查|体检/.test(ctx))
+        category = "医疗";
+      else if (/房租|水电|物业|居住|燃气|宽带/.test(ctx))
+        category = "居住";
+      else if (/学费|课|书|教育|培训|考试|邮电大学|洗澡|洗衣|饮水|校园/.test(ctx))
+        category = "教育";
+
+      setForm(f => ({
+        ...f,
+        amount,
+        category,
+        note: merchant || f.note,
+        date,
+        type: "expense",
+      }));
+
+    } catch (err) {
+      console.error("OCR 识别失败", err);
+      alert("识别失败，请手动填写或重试");
+    }
+    setOcrLoading(false);
   }
 
   function addRec(item) { upd({ recurring:[...(data.recurring||[]),{...item,id:Date.now()}] }); }
@@ -285,8 +381,8 @@ export default function App() {
     .mrow{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
     .mb{background:${T.accent}18;border:none;color:${T.accent};font-size:.9rem;cursor:pointer;padding:6px 10px;border-radius:99px;line-height:1;}
     .ml{font-family:'Kaisei Opti',serif;font-size:1rem;color:${T.text};opacity:.55;letter-spacing:.08em;}
-    .bl{font-size:.68rem;color:${T.accent};opacity:.7;letter-spacing:.18em;text-transform:uppercase;margin-bottom:4px;font-weight:600;}
-    .ba{font-family:'Kaisei Opti',serif;font-size:3.2rem;line-height:1;margin:6px 0 2px;letter-spacing:-.01em;}
+    .bl{font-size:.68rem;color:${T.accent};opacity:.7;letter-spacing:.18em;text-transform:uppercase;margin-bottom:4px;font-weight:600;text-shadow:${data.bgImage?`0 1px 4px ${T.bg}`:'none'};}
+    .ba{font-family:'Kaisei Opti',serif;font-size:3.2rem;line-height:1;margin:6px 0 2px;letter-spacing:-.01em;text-shadow:${data.bgImage?`0 2px 12px ${T.bg}bb`:'none'};}
     .sts{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 24px 12px;}
     .st{background:${data.bgImage?'rgba(255,255,255,0.52)':T.surface};backdrop-filter:${data.bgImage?'blur(16px)':''};-webkit-backdrop-filter:${data.bgImage?'blur(16px)':''};border-radius:18px;padding:14px 16px;box-shadow:0 2px 16px rgba(0,0,0,.06);border:1px solid rgba(255,255,255,0.6);}
     .stl{font-size:.65rem;color:${T.accent};opacity:.75;letter-spacing:.14em;margin-bottom:8px;text-transform:uppercase;font-weight:600;}
@@ -296,7 +392,7 @@ export default function App() {
     .ffl{font-size:.65rem;letter-spacing:.16em;color:${T.accent};opacity:.8;text-transform:uppercase;margin-bottom:6px;font-weight:600;}
     .ffa{font-family:'Kaisei Opti',serif;font-size:2.2rem;color:${T.accent};}
     .cb{padding:0 24px 12px;}
-    .stit{font-size:.72rem;letter-spacing:.16em;color:${T.accent};opacity:.85;text-transform:uppercase;margin-bottom:14px;font-weight:700;}
+    .stit{font-size:.72rem;letter-spacing:.16em;color:${T.accent};opacity:.85;text-transform:uppercase;margin-bottom:14px;font-weight:700;text-shadow:${data.bgImage?`0 1px 4px ${T.bg}aa`:'none'};}
     .es{padding:0 24px 8px;}
     .eh{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
     .sb{background:${T.accent}12;border:1.5px solid ${T.accent}30;border-radius:99px;padding:4px 12px;font-size:.65rem;color:${T.accent};cursor:pointer;font-weight:500;}
@@ -332,7 +428,7 @@ export default function App() {
     .abtn{width:100%;padding:15px;background:linear-gradient(135deg,${T.accent},${T.accent}dd);color:#fff;border:none;border-radius:18px;font-size:.92rem;font-family:system-ui,-apple-system,sans-serif;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.06em;box-shadow:0 4px 14px ${T.accent}40;}
     .sp{padding:24px;}
     .ss{margin-bottom:20px;}
-    .ss-t{font-size:.68rem;letter-spacing:.16em;color:${T.accent};opacity:.8;text-transform:uppercase;margin-bottom:12px;font-weight:700;}
+    .ss-t{font-size:.68rem;letter-spacing:.16em;color:${T.accent};opacity:.8;text-transform:uppercase;margin-bottom:12px;font-weight:700;text-shadow:${data.bgImage?`0 1px 4px ${T.bg}aa`:'none'};}
     .sc{background:${data.bgImage?'rgba(255,255,255,0.52)':T.surface};backdrop-filter:${data.bgImage?'blur(16px)':''};-webkit-backdrop-filter:${data.bgImage?'blur(16px)':''};border-radius:22px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.04);border:1px solid rgba(255,255,255,0.5);}
     .sr{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid ${T.text}06;}
     .sr:last-child{border-bottom:none;}
@@ -382,7 +478,13 @@ export default function App() {
           background:`linear-gradient(to bottom, ${T.bg}cc 0%, ${T.bg}88 60%, transparent 100%)`,
         }}/>}
         {tab==="home" && <>
-          <div className="hdr">
+          <div className="hdr" style={{
+            background:data.bgImage?'rgba(255,255,255,0.45)':'transparent',
+            backdropFilter:data.bgImage?'blur(12px)':'',
+            WebkitBackdropFilter:data.bgImage?'blur(12px)':'',
+            borderRadius:data.bgImage?'0 0 24px 24px':'',
+            marginBottom:data.bgImage?8:0,
+          }}>
             <div className="mrow">
               <button className="mb" onClick={()=>setMonth(m=>{const d=new Date(m+"-01");d.setMonth(d.getMonth()-1);return d.toISOString().slice(0,7);})}>‹</button>
               <span className="ml">{month.replace("-"," / ")}</span>
@@ -544,7 +646,16 @@ export default function App() {
         </>}
 
         {tab==="goals" && <div className="gp">
-          <div style={{fontFamily:"'Ma Shan Zheng',cursive",fontSize:"1.8rem",marginBottom:24,color:T.accent,fontWeight:400}}>愿望清单 ✨</div>
+          <div style={{
+            fontFamily:"'Ma Shan Zheng',cursive",fontSize:"1.8rem",marginBottom:24,
+            color:T.accent,fontWeight:400,
+            display:"inline-block",
+            background:data.bgImage?`rgba(255,255,255,0.55)`:'transparent',
+            backdropFilter:data.bgImage?'blur(10px)':'',
+            WebkitBackdropFilter:data.bgImage?'blur(10px)':'',
+            borderRadius:data.bgImage?14:0,
+            padding:data.bgImage?'4px 14px 4px 10px':0,
+          }}>愿望清单 ✨</div>
           {data.yearGoal ? (()=>{
             const yg = data.yearGoal;
             const initialSaved = parseFloat(yg.initialSaved)||0;
@@ -688,7 +799,16 @@ export default function App() {
         </div>}
 
         {tab==="settings" && <div className="sp">
-          <div style={{fontFamily:"'Ma Shan Zheng',cursive",fontSize:"1.8rem",marginBottom:24,paddingTop:16,color:T.accent,fontWeight:400}}>设置 ⚙️</div>
+          <div style={{
+            fontFamily:"'Ma Shan Zheng',cursive",fontSize:"1.8rem",marginBottom:24,paddingTop:16,
+            color:T.accent,fontWeight:400,
+            display:"inline-block",
+            background:data.bgImage?`rgba(255,255,255,0.55)`:'transparent',
+            backdropFilter:data.bgImage?'blur(10px)':'',
+            WebkitBackdropFilter:data.bgImage?'blur(10px)':'',
+            borderRadius:data.bgImage?14:0,
+            padding:data.bgImage?'4px 14px 4px 10px':0,
+          }}>设置 ⚙️</div>
           <div className="ss">
             <div className="ss-t">记账模式</div>
             <div className="mtog">
@@ -699,25 +819,73 @@ export default function App() {
           </div>
           <div className="ss">
             <div className="ss-t">月度预算</div>
-            <div className="bw"><span style={{opacity:.4}}>¥</span>
-              <input className="bi" type="number" placeholder="0" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}/>
-              <button className="sbt" onClick={()=>upd({budget:parseFloat(budgetInput)||0})}>保存</button>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{
+                flex:1,display:"flex",alignItems:"center",
+                background:data.budget>0?`${T.accent}10`:T.bg,
+                border:`1.5px solid ${data.budget>0?T.accent+"35":T.text+"12"}`,
+                borderRadius:14,overflow:"hidden",transition:"all .2s",
+              }}>
+                <span style={{padding:"11px 10px 11px 14px",fontSize:".95rem",color:T.accent,opacity:.7,fontWeight:500}}>¥</span>
+                <input
+                  className="bi"
+                  type="number" placeholder="设定月度预算"
+                  value={budgetInput}
+                  onChange={e=>setBudgetInput(e.target.value)}
+                  style={{background:"transparent",border:"none",flex:1,padding:"11px 14px 11px 0",color:T.text,fontSize:".95rem",outline:"none"}}
+                />
+              </div>
+              <button className="sbt" onClick={()=>upd({budget:parseFloat(budgetInput)||0})} style={{borderRadius:14,padding:"11px 20px",whiteSpace:"nowrap"}}>保存</button>
             </div>
           </div>
           {data.budget>0&&<div className="ss">
             <div className="ss-t">分类预算调整</div>
             <div className="sc">
-              <div style={{fontSize:".75rem",opacity:.45,marginBottom:12}}>为每个分类单独设定月度上限</div>
-              {DETAILED_CATEGORIES.expense.map(c=>(
-                <div key={c} className="sr">
-                  <span style={{fontSize:".85rem",flex:1}}>{ICONS[c]||"•"} {c}</span>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{opacity:.35,fontSize:".82rem"}}>¥</span>
-                    <input type="number" value={data.catBudgets?.[c]??""} placeholder={String(effectiveCatBudgets[c]||0)} onChange={e=>{const v=parseFloat(e.target.value);upd({catBudgets:{...(data.catBudgets||{}),[c]:isNaN(v)?undefined:v}});}} style={{width:80,background:T.bg,border:"none",borderRadius:8,padding:"6px 10px",fontSize:".85rem",color:T.text,outline:"none",textAlign:"right"}}/>
+              <div style={{fontSize:".72rem",opacity:.4,marginBottom:14,letterSpacing:".04em"}}>为每个分类单独设定月度上限，留空则自动按比例分配</div>
+              {DETAILED_CATEGORIES.expense.map(c=>{
+                const hasVal = data.catBudgets?.[c]!=null;
+                const placeholderVal = effectiveCatBudgets[c]||0;
+                return <div key={c} className="sr">
+                  <span style={{fontSize:".85rem",flex:1,display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:"1.1rem"}}>{ICONS[c]||"•"}</span>
+                    <span>{c}</span>
+                  </span>
+                  <div style={{
+                    display:"flex",alignItems:"center",gap:0,
+                    background:hasVal?`${T.accent}12`:T.bg,
+                    border:`1.5px solid ${hasVal?T.accent+"40":T.text+"12"}`,
+                    borderRadius:12,overflow:"hidden",
+                    transition:"all .2s",
+                  }}>
+                    <span style={{
+                      padding:"6px 8px 6px 10px",
+                      fontSize:".78rem",
+                      color:hasVal?T.accent:T.text,
+                      opacity:hasVal?1:.35,
+                      fontWeight:500,
+                    }}>¥</span>
+                    <input
+                      type="number"
+                      value={data.catBudgets?.[c]??""}
+                      placeholder={String(placeholderVal)}
+                      onChange={e=>{const v=parseFloat(e.target.value);upd({catBudgets:{...(data.catBudgets||{}),[c]:isNaN(v)?undefined:v}});}}
+                      style={{
+                        width:72,background:"transparent",border:"none",
+                        padding:"6px 10px 6px 0",fontSize:".88rem",
+                        color:hasVal?T.accent:T.text,
+                        outline:"none",textAlign:"right",fontWeight:hasVal?600:400,
+                      }}
+                    />
                   </div>
-                </div>
-              ))}
-              <button onClick={()=>upd({catBudgets:{}})} style={{marginTop:12,background:"none",border:`1px solid ${T.text}15`,borderRadius:8,padding:"6px 14px",fontSize:".72rem",opacity:.45,cursor:"pointer",color:T.text}}>重置为自动分配</button>
+                </div>;
+              })}
+              <button onClick={()=>upd({catBudgets:{}})} style={{
+                marginTop:14,background:`${T.accent}10`,
+                border:`1px solid ${T.accent}25`,
+                borderRadius:10,padding:"7px 16px",
+                fontSize:".72rem",color:T.accent,
+                cursor:"pointer",opacity:.8,fontWeight:500,
+              }}>↺ 重置为自动分配</button>
             </div>
           </div>}
           <div className="ss">
