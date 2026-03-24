@@ -67,6 +67,7 @@ export default function App() {
   const [showYearDeposit, setShowYearDeposit] = useState(false);
   const [yearDepositAmt, setYearDepositAmt] = useState("");
   const [sysDark, setSysDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const [showNote, setShowNote] = useState(false); // 备注默认收起
   // 分类下钻：expandedCat = 当前展开的分类名，excludedIds = 被屏蔽的条目id集合
   const [expandedCat, setExpandedCat] = useState(null);
   const [excludedIds, setExcludedIds] = useState(new Set());
@@ -382,11 +383,11 @@ export default function App() {
     .mb{background:${T.accent}18;border:none;color:${T.accent};font-size:.9rem;cursor:pointer;padding:6px 10px;border-radius:99px;line-height:1;}
     .ml{font-family:'Kaisei Opti',serif;font-size:1rem;color:${T.text};opacity:.55;letter-spacing:.08em;}
     .bl{font-size:.68rem;color:${T.accent};opacity:.7;letter-spacing:.18em;text-transform:uppercase;margin-bottom:4px;font-weight:600;text-shadow:${data.bgImage?`0 1px 4px ${T.bg}`:'none'};}
-    .ba{font-family:'Kaisei Opti',serif;font-size:3.2rem;line-height:1;margin:6px 0 2px;letter-spacing:-.01em;text-shadow:${data.bgImage?`0 2px 12px ${T.bg}bb`:'none'};}
+    .ba{font-family:'Kaisei Opti',serif;font-size:clamp(1.8rem,8vw,3.2rem);line-height:1;margin:6px 0 2px;letter-spacing:-.02em;text-shadow:${data.bgImage?`0 2px 12px ${T.bg}bb`:'none'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:calc(100% - 70px);}
     .sts{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 24px 12px;}
     .st{background:${data.bgImage?'rgba(255,255,255,0.52)':T.surface};backdrop-filter:${data.bgImage?'blur(16px)':''};-webkit-backdrop-filter:${data.bgImage?'blur(16px)':''};border-radius:18px;padding:14px 16px;box-shadow:0 2px 16px rgba(0,0,0,.06);border:1px solid rgba(255,255,255,0.6);}
     .stl{font-size:.65rem;color:${T.accent};opacity:.75;letter-spacing:.14em;margin-bottom:8px;text-transform:uppercase;font-weight:600;}
-    .stv{font-size:1.25rem;font-weight:600;}
+    .stv{font-size:clamp(.95rem,4vw,1.25rem);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .stv.income{color:#6db88a;} .stv.expense{color:#e07a95;}
     .ffc{margin:0 24px 10px;background:${data.bgImage?`rgba(255,255,255,0.48)`:`linear-gradient(135deg,${T.accent}22,${T.accent}0a)`};backdrop-filter:${data.bgImage?'blur(16px)':''};-webkit-backdrop-filter:${data.bgImage?'blur(16px)':''};border-radius:22px;padding:20px;border:1.5px solid ${T.accent}25;position:relative;overflow:hidden;}
     .ffl{font-size:.65rem;letter-spacing:.16em;color:${T.accent};opacity:.8;text-transform:uppercase;margin-bottom:6px;font-weight:600;}
@@ -413,7 +414,7 @@ export default function App() {
     .fab{position:fixed;width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,${T.accent},${T.accent}cc);border:none;color:#fff;font-size:1.4rem;cursor:pointer;box-shadow:0 4px 18px ${T.accent}55;display:flex;align-items:center;justify-content:center;transition:transform .15s;z-index:50;}
     .fab:active{transform:scale(.92);}
     .ov{position:fixed;inset:0;background:#00000050;z-index:100;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(2px);}
-    .mo{background:${data.bgImage?'rgba(255,255,255,0.80)':T.surface};backdrop-filter:${data.bgImage?'blur(24px)':''};-webkit-backdrop-filter:${data.bgImage?'blur(24px)':''};border-radius:28px 28px 0 0;padding:28px 24px 52px;width:100%;max-width:430px;max-height:90vh;overflow-y:auto;}
+    .mo{background:${data.bgImage?'rgba(255,255,255,0.80)':T.surface};backdrop-filter:${data.bgImage?'blur(24px)':''};-webkit-backdrop-filter:${data.bgImage?'blur(24px)':''};border-radius:28px 28px 0 0;padding:28px 24px 48px;width:100%;max-width:430px;height:auto;max-height:92vh;overflow-y:auto;transition:height .2s;}
     .mt{font-family:'Kaisei Opti',serif;font-size:1.4rem;margin-bottom:22px;color:${T.text};}
     .tt{display:flex;background:${data.bgImage?'rgba(255,255,255,0.40)':T.bg};border-radius:16px;padding:4px;margin-bottom:20px;}
     .tb{flex:1;padding:9px;border:none;border-radius:13px;cursor:pointer;font-size:.82rem;font-family:system-ui,-apple-system,sans-serif;background:transparent;color:${T.text};opacity:.45;transition:all .2s;}
@@ -423,7 +424,7 @@ export default function App() {
     .fi{width:100%;background:${data.bgImage?'rgba(255,255,255,0.6)':T.bg};border:none;border-radius:16px;padding:13px 16px;font-size:.95rem;font-family:system-ui,-apple-system,sans-serif;color:${T.text};outline:none;}
     .fi::placeholder{opacity:.28;}
     .cg{display:flex;flex-wrap:wrap;gap:8px;}
-    .cbtn{padding:8px 16px;border-radius:99px;border:1.5px solid ${T.text}12;background:${data.bgImage?'rgba(255,255,255,0.6)':T.bg};font-size:.78rem;font-family:system-ui,-apple-system,sans-serif;color:${T.text};cursor:pointer;opacity:.65;transition:all .15s;}
+    .cbtn{padding:8px 0;border-radius:99px;border:1.5px solid ${T.text}12;background:${data.bgImage?'rgba(255,255,255,0.6)':T.bg};font-size:.78rem;font-family:system-ui,-apple-system,sans-serif;color:${T.text};cursor:pointer;opacity:.65;transition:all .15s;width:calc(33.33% - 6px);text-align:center;}
     .cbtn.active{background:${T.accent};border-color:${T.accent};color:#fff;opacity:1;}
     .abtn{width:100%;padding:15px;background:linear-gradient(135deg,${T.accent},${T.accent}dd);color:#fff;border:none;border-radius:18px;font-size:.92rem;font-family:system-ui,-apple-system,sans-serif;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.06em;box-shadow:0 4px 14px ${T.accent}40;}
     .sp{padding:24px;}
@@ -1046,7 +1047,7 @@ export default function App() {
 
         <button className="fab" style={fabStyle} onClick={()=>tab==="goals"?setShowAddGoal(true):setShowAdd(true)}>＋</button>
 
-        {showAdd&&<div className="ov" onClick={e=>{if(e.target===e.currentTarget){setShowAdd(false);setOcrPreview(null);}}}>
+        {showAdd&&<div className="ov" onClick={e=>{if(e.target===e.currentTarget){setShowAdd(false);setOcrPreview(null);setShowNote(false);}}}>
           <div className="mo">
             <div className="mt">记一笔</div>
             <label style={{display:"flex",alignItems:"center",gap:10,background:T.accent+"12",border:`1.5px solid ${T.accent}30`,borderRadius:16,padding:"11px 16px",marginBottom:18,cursor:"pointer"}}>
@@ -1063,10 +1064,68 @@ export default function App() {
               <button className={`tb${form.type==="expense"?" active":""}`} onClick={()=>setForm(f=>({...f,type:"expense",category:""}))}>支出</button>
               <button className={`tb${form.type==="income"?" active":""}`} onClick={()=>setForm(f=>({...f,type:"income",category:""}))}>收入</button>
             </div>
-            <div className="fg"><div className="fl">金额</div><input className="fi" type="number" placeholder="0.00" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))} autoFocus/></div>
+            {/* 金额 — inputmode=decimal 直接弹数字键盘 */}
+            <div className="fg">
+              <div className="fl">金额</div>
+              <div style={{display:"flex",alignItems:"center",background:T.bg,borderRadius:16,overflow:"hidden"}}>
+                <span style={{
+                  padding:"13px 4px 13px 16px",
+                  fontSize:"1.4rem",fontWeight:600,
+                  color:form.amount?T.accent:T.text,
+                  opacity:form.amount?1:.28,
+                  lineHeight:1,transition:"color .2s,opacity .2s",
+                  fontFamily:"'Kaisei Opti',serif",
+                }}>¥</span>
+                <input
+                  type="number" inputMode="decimal"
+                  placeholder="0.00" value={form.amount}
+                  onChange={e=>setForm(f=>({...f,amount:e.target.value}))}
+                  autoFocus
+                  style={{
+                    flex:1,background:"transparent",border:"none",outline:"none",
+                    padding:"13px 16px 13px 4px",
+                    fontSize:"1.4rem",fontWeight:600,letterSpacing:".02em",
+                    color:T.text,fontFamily:"system-ui,-apple-system,sans-serif",
+                  }}
+                />
+              </div>
+            </div>
             <div className="fg"><div className="fl">分类</div><div className="cg">{cats[form.type].map(c=><button key={c} className={`cbtn${form.category===c?" active":""}`} onClick={()=>setForm(f=>({...f,category:c}))}>{ICONS[c]} {c}</button>)}</div></div>
-            <div className="fg"><div className="fl">备注</div><input className="fi" placeholder="可选" value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/></div>
-            <div className="fg"><div className="fl">日期</div><input className="fi" type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></div>
+            {/* 日期 — 快捷今天/昨天 + 日期选择器 */}
+            <div className="fg">
+              <div className="fl">日期</div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {[
+                  {label:"今天", val:new Date().toISOString().slice(0,10)},
+                  {label:"昨天", val:new Date(Date.now()-86400000).toISOString().slice(0,10)},
+                ].map(({label,val})=>(
+                  <button key={label} onClick={()=>setForm(f=>({...f,date:val}))}
+                    style={{padding:"8px 14px",borderRadius:99,border:`1.5px solid ${form.date===val?T.accent:T.text+"15"}`,background:form.date===val?`${T.accent}18`:"transparent",color:form.date===val?T.accent:T.text,fontSize:".78rem",fontWeight:form.date===val?600:400,cursor:"pointer",transition:"all .15s",whiteSpace:"nowrap"}}>
+                    {label}
+                  </button>
+                ))}
+                <input className="fi" type="date" value={form.date}
+                  onChange={e=>setForm(f=>({...f,date:e.target.value}))}
+                  style={{flex:1,padding:"8px 12px",fontSize:".82rem"}}
+                />
+              </div>
+            </div>
+            {/* 备注 — 默认收起，点击展开 */}
+            <div className="fg" style={{marginBottom:showNote?18:12}}>
+              {!showNote
+                ? <button onClick={()=>setShowNote(true)}
+                    style={{background:"none",border:`1px dashed ${T.text}20`,borderRadius:12,padding:"9px 16px",width:"100%",textAlign:"left",fontSize:".78rem",color:T.text,opacity:.45,cursor:"pointer"}}>
+                    ＋ 添加备注（可选）
+                  </button>
+                : <div style={{position:"relative"}}>
+                    <div className="fl">备注</div>
+                    <input className="fi" placeholder="备注内容" autoFocus value={form.note}
+                      onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
+                    {!form.note&&<button onClick={()=>setShowNote(false)}
+                      style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",opacity:.3,cursor:"pointer",fontSize:".9rem",color:T.text}}>×</button>}
+                  </div>
+              }
+            </div>
             {form.type==="expense"&&(data.funFund||0)>0&&(
               <div onClick={()=>setForm(f=>({...f,fromFunFund:!f.fromFunFund}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:form.fromFunFund?`${T.accent}14`:T.bg,border:`1.5px solid ${form.fromFunFund?T.accent+"40":T.text+"10"}`,borderRadius:16,padding:"12px 16px",marginBottom:16,cursor:"pointer",transition:"all .2s"}}>
                 <div>
@@ -1078,7 +1137,14 @@ export default function App() {
                 </div>
               </div>
             )}
-            <button className="abtn" onClick={addEntry}>记 录</button>
+            {(()=>{
+              const disabled = !form.amount || !form.category;
+              return <button className="abtn" onClick={addEntry}
+                disabled={disabled}
+                style={{opacity:disabled?.4:1,cursor:disabled?"not-allowed":"pointer",transition:"opacity .2s"}}>
+                记 录
+              </button>;
+            })()}
           </div>
         </div>}
 
