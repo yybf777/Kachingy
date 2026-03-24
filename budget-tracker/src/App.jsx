@@ -378,6 +378,7 @@ export default function App() {
     setOcrLoading(false);
   }
 
+  function addRec(item) { upd({ recurring:[...(data.recurring||[]),{...item,id:Date.now()}] }); }
   function delRec(id) { upd({ recurring:data.recurring.filter(r=>r.id!==id) }); }
   function addGoal(g) { upd({ goals:[...(data.goals||[]),{...g,id:Date.now(),saved:parseFloat(g.saved)||0}] }); }
   function delGoal(id) { upd({ goals:data.goals.filter(g=>g.id!==id) }); }
@@ -789,7 +790,7 @@ export default function App() {
 
                 <div className="gas">
                   <span className="gsv" style={{color:g.bgImage?"#fff":T.accent}}>已攒 ¥{saved.toFixed(2)}</span>
-                  <span style={{opacity:g.bgImage?.6:.38,fontSize:".82rem",color:g.bgImage?"#fff":""}}>目标 ¥{tgt.toFixed(2)}</span>
+                  <span style={{opacity:g.bgImage ? 0.6 : 0.38,fontSize:".82rem",color:g.bgImage?"#fff":""}}>目标 ¥{tgt.toFixed(2)}</span>
                 </div>
                 <div className="gbb" style={{background:g.bgImage?"rgba(255,255,255,.2)":T.text+"10"}}>
                   <div className={`gbf${done?" done":""}`} style={{width:`${pct}%`,background:g.bgImage?"rgba(255,255,255,.9)":""}}/>
