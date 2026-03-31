@@ -68,6 +68,9 @@ export default function App() {
   const [yearDepositAmt, setYearDepositAmt] = useState("");
   const [sysDark, setSysDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [showNote, setShowNote] = useState(false); // 备注默认收起
+  const [searchQuery, setSearchQuery] = useState(""); // 账单搜索
+  const [editEntry, setEditEntry] = useState(null); // 正在编辑的条目
+  const [editForm, setEditForm] = useState(null);   // 编辑表单数据
   // 分类下钻：expandedCat = 当前展开的分类名，excludedIds = 被屏蔽的条目id集合
   const [expandedCat, setExpandedCat] = useState(null);
   const [excludedIds, setExcludedIds] = useState(new Set());
@@ -141,6 +144,21 @@ export default function App() {
       const goalName = entry.note.replace("存入：","");
       setData(d => ({...d,...patch, entries:d.entries.filter(e=>e.id!==id), goals:d.goals.map(g => g.name===goalName ? {...g,saved:Math.max(0,(g.saved||0)-entry.amount)} : g)}));
     } else { upd(patch); }
+  }
+
+  function saveEditEntry() {
+    if (!editForm.amount || !editForm.category) return;
+    const updated = {
+      ...editEntry,
+      amount: parseFloat(editForm.amount),
+      category: editForm.category,
+      note: editForm.note,
+      date: editForm.date,
+      type: editForm.type,
+    };
+    upd({ entries: data.entries.map(e => e.id===editEntry.id ? updated : e) });
+    setEditEntry(null);
+    setEditForm(null);
   }
 
   async function handleImport(e) {
@@ -357,7 +375,22 @@ export default function App() {
   }
   const effectiveCatBudgets = getEffectiveCatBudgets();
   const maxCatVal = Math.max(...Object.keys(catTotals).map(c=>Math.max(catTotals[c],effectiveCatBudgets[c]||0)),1);
-  const sortedEntries = [...monthEntries].sort((a,b)=>sortAsc?a.date.localeCompare(b.date):b.date.localeCompare(a.date));
+  // 搜索时跨月搜索全部记录，否则只看当月
+  const searchBase = searchQuery.trim()
+    ? data.entries
+    : monthEntries;
+  const filteredEntries = searchQuery.trim()
+    ? searchBase.filter(e=>{
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          e.category.includes(q) ||
+          (e.note||"").toLowerCase().includes(q) ||
+          String(e.amount).includes(q) ||
+          e.date.includes(q)
+        );
+      })
+    : searchBase;
+  const sortedEntries = [...filteredEntries].sort((a,b)=>sortAsc?a.date.localeCompare(b.date):b.date.localeCompare(a.date));
 
   const THEME_EMOJIS = ["🧀","💵","🍀","🎀","💜","🦋"];
   const fundEmoji = data.theme===-1 ? (sysDark?"💵":"🧀") : (THEME_EMOJIS[data.theme]||"💰");
@@ -498,6 +531,64 @@ export default function App() {
             <div className="st"><div className="stl">收入</div><div className="stv income">¥{totalIncome.toFixed(2)}</div></div>
             <div className="st"><div className="stl">支出</div><div className="stv expense">¥{totalExpense.toFixed(2)}</div></div>
           </div>
+          {/* ── 月度对比图 ── */}
+          {(()=>{
+            // 生成所有有数据的月份（按时间排序）
+            const allMonths = [...new Set(data.entries.map(e=>e.date.slice(0,7)))].sort();
+            if (allMonths.length === 0) return null;
+            const maxAmt = Math.max(...allMonths.map(m=>{
+              const inc = data.entries.filter(e=>e.date.startsWith(m)&&e.type==="income").reduce((s,e)=>s+e.amount,0);
+              const exp = data.entries.filter(e=>e.date.startsWith(m)&&e.type==="expense").reduce((s,e)=>s+e.amount,0);
+              return Math.max(inc, exp, data.budget||0);
+            }), 1);
+            const BAR_W = 18;
+            const BAR_GAP = 6;
+            const GROUP_W = BAR_W*2 + BAR_GAP + 28; // 双柱+间距+月份标签间距
+            const H = 90;
+            return <div style={{padding:"0 0 16px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 24px",marginBottom:10}}>
+                <span className="stit" style={{margin:0}}>月度趋势</span>
+                <span style={{fontSize:".65rem",opacity:.4,letterSpacing:".06em"}}>
+                  <span style={{color:"#6db88a",fontWeight:600}}>■</span> 收入&nbsp;
+                  <span style={{color:"#e07a95",fontWeight:600}}>■</span> 支出
+                  {data.budget>0&&<><span style={{opacity:.5}}>&nbsp;— 预算</span></>}
+                </span>
+              </div>
+              <div style={{overflowX:"auto",paddingLeft:24,paddingRight:24,scrollbarWidth:"none"}}
+                ref={el=>{if(el)el.scrollLeft=el.scrollWidth;}}>
+                <div style={{display:"flex",alignItems:"flex-end",gap:8,minWidth:"max-content",paddingBottom:4}}>
+                  {allMonths.map(m=>{
+                    const inc=data.entries.filter(e=>e.date.startsWith(m)&&e.type==="income").reduce((s,e)=>s+e.amount,0);
+                    const exp=data.entries.filter(e=>e.date.startsWith(m)&&e.type==="expense").reduce((s,e)=>s+e.amount,0);
+                    const incH=Math.max(2,Math.round((inc/maxAmt)*H));
+                    const expH=Math.max(2,Math.round((exp/maxAmt)*H));
+                    const budgetH=data.budget>0?Math.round((data.budget/maxAmt)*H):null;
+                    const isCurrentMonth=m===month;
+                    return <div key={m} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative"}}>
+                      {/* 预算线 */}
+                      {budgetH&&<div style={{position:"absolute",bottom:budgetH+18,left:-4,right:-4,height:1.5,background:T.accent,opacity:.4,borderRadius:1,zIndex:1}}/>}
+                      {/* 双柱 */}
+                      <div style={{display:"flex",alignItems:"flex-end",gap:BAR_GAP,height:H,position:"relative"}}>
+                        {/* 收入柱 */}
+                        <div style={{width:BAR_W,height:incH,background:isCurrentMonth?"#6db88a":"#6db88a60",borderRadius:"6px 6px 2px 2px",transition:"height .4s cubic-bezier(.4,0,.2,1)",cursor:"pointer",position:"relative"}}
+                          title={`${m} 收入 ¥${inc.toFixed(0)}`}/>
+                        {/* 支出柱 */}
+                        <div style={{width:BAR_W,height:expH,background:isCurrentMonth?(exp>data.budget&&data.budget>0?"#d4688a":"#e07a95"):(exp>data.budget&&data.budget>0?"#d4688a60":"#e07a9560"),borderRadius:"6px 6px 2px 2px",transition:"height .4s cubic-bezier(.4,0,.2,1)",cursor:"pointer"}}
+                          title={`${m} 支出 ¥${exp.toFixed(0)}`}/>
+                      </div>
+                      {/* 月份标签 */}
+                      <div style={{fontSize:".6rem",opacity:isCurrentMonth?1:.45,color:isCurrentMonth?T.accent:T.text,fontWeight:isCurrentMonth?700:400,whiteSpace:"nowrap"}}>
+                        {m.slice(5)}月
+                      </div>
+                      {/* 当前月份下划线 */}
+                      {isCurrentMonth&&<div style={{width:4,height:4,borderRadius:"50%",background:T.accent}}/>}
+                    </div>;
+                  })}
+                </div>
+              </div>
+            </div>;
+          })()}
+
           {data.budget>0 && (()=>{
             const budgetLeft=data.budget-totalExpense; const over=budgetLeft<0;
             return <div style={{padding:"0 24px 12px"}}>
@@ -634,13 +725,45 @@ export default function App() {
               <span className="stit" style={{margin:0}}>明细记录</span>
               <button className="sb" onClick={()=>setSortAsc(v=>!v)}>{sortAsc?"↑ 正序":"↓ 倒序"}</button>
             </div>
-            {sortedEntries.length===0&&<div className="empty">本月暂无记录</div>}
+            {/* 搜索框 */}
+            <div style={{position:"relative",marginBottom:14}}>
+              <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:".95rem",opacity:.35,pointerEvents:"none"}}>🔍</span>
+              <input
+                type="text"
+                placeholder="搜索分类、备注、金额…"
+                value={searchQuery}
+                onChange={e=>setSearchQuery(e.target.value)}
+                style={{
+                  width:"100%",background:T.bg,border:`1.5px solid ${searchQuery?T.accent+"50":T.text+"10"}`,
+                  borderRadius:14,padding:"10px 36px 10px 38px",
+                  fontSize:".85rem",color:T.text,outline:"none",
+                  transition:"border-color .2s",
+                  fontFamily:"system-ui,-apple-system,sans-serif",
+                }}
+              />
+              {searchQuery&&<button onClick={()=>setSearchQuery("")}
+                style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:".9rem",color:T.text,opacity:.35,padding:4}}>
+                ×
+              </button>}
+            </div>
+            {/* 搜索结果提示 */}
+            {searchQuery.trim()&&<div style={{fontSize:".72rem",opacity:.45,marginBottom:10,letterSpacing:".04em"}}>
+              搜索「{searchQuery.trim()}」· 共 {sortedEntries.length} 条{sortedEntries.length>0?`，合计 ¥${sortedEntries.filter(e=>e.type==="expense").reduce((s,e)=>s+e.amount,0).toFixed(2)}`:""}
+            </div>}
+            {sortedEntries.length===0&&<div className="empty">{searchQuery.trim()?"没有找到相关记录":"本月暂无记录"}</div>}
             {sortedEntries.map(e=>(
-              <div key={e.id} className="en">
+              <div key={e.id} className="en" onClick={()=>{setEditEntry(e);setEditForm({type:e.type,amount:String(e.amount),category:e.category,note:e.note||"",date:e.date});}} style={{cursor:"pointer"}}>
                 <div className="ei">{ICONS[e.category]||"•"}</div>
-                <div className="eif"><div className="ec">{e.category}{e.fromFunFund&&<span style={{fontSize:".6rem",background:T.accent+"20",color:T.accent,borderRadius:99,padding:"1px 6px",marginLeft:6,fontWeight:500}}>基金</span>}</div>{e.note&&<div className="eno">{e.note}</div>}</div>
+                <div className="eif">
+                  <div className="ec">
+                    {e.category}
+                    {e.fromFunFund&&<span style={{fontSize:".6rem",background:T.accent+"20",color:T.accent,borderRadius:99,padding:"1px 6px",marginLeft:6,fontWeight:500}}>基金</span>}
+                    {e.auto&&<span style={{fontSize:".6rem",background:T.text+"10",color:T.text,borderRadius:99,padding:"1px 6px",marginLeft:6,opacity:.45}}>自动</span>}
+                  </div>
+                  {e.note&&<div className="eno">{e.note}</div>}
+                </div>
                 <div className="er"><div className={`ea ${e.type}`}>{e.type==="expense"?"-":"+"}¥{e.amount.toFixed(2)}</div><div className="ed">{e.date}</div></div>
-                <button className="edl" onClick={()=>delEntry(e.id)}>×</button>
+                <button className="edl" onClick={ev=>{ev.stopPropagation();delEntry(e.id);}}>×</button>
               </div>
             ))}
           </div>
@@ -802,138 +925,90 @@ export default function App() {
         {tab==="settings" && <div className="sp">
           <div style={{
             fontFamily:"'Ma Shan Zheng',cursive",fontSize:"1.8rem",marginBottom:24,paddingTop:16,
-            color:T.accent,fontWeight:400,
-            display:"inline-block",
+            color:T.accent,fontWeight:400,display:"inline-block",
             background:data.bgImage?`rgba(255,255,255,0.55)`:'transparent',
             backdropFilter:data.bgImage?'blur(10px)':'',
             WebkitBackdropFilter:data.bgImage?'blur(10px)':'',
             borderRadius:data.bgImage?14:0,
             padding:data.bgImage?'4px 14px 4px 10px':0,
           }}>设置 ⚙️</div>
-          <div className="ss">
-            <div className="ss-t">记账模式</div>
-            <div className="mtog">
-              <button className={`mtb${data.mode==="detailed"?" active":""}`} onClick={()=>upd({mode:"detailed"})}>详细模式</button>
-              <button className={`mtb${data.mode==="simple"?" active":""}`} onClick={()=>upd({mode:"simple"})}>懒人模式</button>
-            </div>
-            <div style={{fontSize:".72rem",opacity:.35,marginTop:8}}>{data.mode==="detailed"?"🫐 细分九大类":"🥕 必需品 / 非必需品"}</div>
-          </div>
-          <div className="ss">
-            <div className="ss-t">月度预算</div>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div style={{
-                flex:1,display:"flex",alignItems:"center",
-                background:data.budget>0?`${T.accent}10`:T.bg,
-                border:`1.5px solid ${data.budget>0?T.accent+"35":T.text+"12"}`,
-                borderRadius:14,overflow:"hidden",transition:"all .2s",
-              }}>
-                <span style={{padding:"11px 10px 11px 14px",fontSize:".95rem",color:T.accent,opacity:.7,fontWeight:500}}>¥</span>
-                <input
-                  className="bi"
-                  type="number" placeholder="设定月度预算"
-                  value={budgetInput}
-                  onChange={e=>setBudgetInput(e.target.value)}
-                  style={{background:"transparent",border:"none",flex:1,padding:"11px 14px 11px 0",color:T.text,fontSize:".95rem",outline:"none"}}
-                />
+
+          {/* ── 记账设置 ── */}
+          <div className="ss-t">记账设置</div>
+          <div className="sc" style={{marginBottom:20}}>
+            {[
+              {
+                icon:"📋", label:"记账模式",
+                value:data.mode==="detailed"?"详细模式":"懒人模式",
+                key:"mode",
+              },
+              {
+                icon:"💰", label:"月度预算",
+                value:data.budget>0?`¥${data.budget}`:"未设置",
+                key:"budget",
+              },
+              {
+                icon:"📊", label:"分类预算",
+                value:(()=>{const n=Object.keys(data.catBudgets||{}).filter(k=>data.catBudgets[k]!=null).length;return n>0?`已设置 ${n} 项`:"自动分配";})(),
+                key:"catBudget",
+                disabled:!data.budget,
+              },
+              {
+                icon:"🔄", label:"定期账单",
+                value:(data.recurring?.length||0)>0?`${data.recurring.length} 项`:"未设置",
+                key:"recurring",
+              },
+            ].map(({icon,label,value,key,disabled})=>(
+              <div key={key} className="sr" style={{opacity:disabled?.35:1}}
+                onClick={()=>!disabled&&upd({_settingPanel:key===data._settingPanel?null:key})}>
+                <span style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+                  <span style={{fontSize:"1.1rem",width:28,textAlign:"center"}}>{icon}</span>
+                  <span style={{fontSize:".92rem"}}>{label}</span>
+                </span>
+                <span style={{display:"flex",alignItems:"center",gap:6,fontSize:".78rem",opacity:.5}}>
+                  {value}
+                  <span style={{fontSize:".75rem",opacity:.6,transform:data._settingPanel===key?"rotate(90deg)":"rotate(0deg)",transition:"transform .2s",display:"inline-block"}}>›</span>
+                </span>
               </div>
-              <button className="sbt" onClick={()=>upd({budget:parseFloat(budgetInput)||0})} style={{borderRadius:14,padding:"11px 20px",whiteSpace:"nowrap"}}>保存</button>
-            </div>
-          </div>
-          {data.budget>0&&<div className="ss">
-            <div className="ss-t">分类预算调整</div>
-            <div className="sc">
-              <div style={{fontSize:".72rem",opacity:.4,marginBottom:14,letterSpacing:".04em"}}>为每个分类单独设定月度上限，留空则自动按比例分配</div>
+            ))}
+            {/* 展开面板 */}
+            {data._settingPanel==="mode"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div className="mtog">
+                <button className={`mtb${data.mode==="detailed"?" active":""}`} onClick={()=>upd({mode:"detailed"})}>详细模式</button>
+                <button className={`mtb${data.mode==="simple"?" active":""}`} onClick={()=>upd({mode:"simple"})}>懒人模式</button>
+              </div>
+              <div style={{fontSize:".72rem",opacity:.35,marginTop:8}}>{data.mode==="detailed"?"🫐 细分九大类":"🥕 必需品 / 非必需品"}</div>
+            </div>}
+            {data._settingPanel==="budget"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{flex:1,display:"flex",alignItems:"center",background:data.budget>0?`${T.accent}10`:T.bg,border:`1.5px solid ${data.budget>0?T.accent+"35":T.text+"12"}`,borderRadius:14,overflow:"hidden"}}>
+                  <span style={{padding:"11px 10px 11px 14px",fontSize:".95rem",color:T.accent,opacity:.7,fontWeight:500}}>¥</span>
+                  <input className="bi" type="number" placeholder="设定月度预算" value={budgetInput}
+                    onChange={e=>setBudgetInput(e.target.value)}
+                    style={{background:"transparent",border:"none",flex:1,padding:"11px 14px 11px 0",color:T.text,fontSize:".95rem",outline:"none"}}/>
+                </div>
+                <button className="sbt" onClick={()=>upd({budget:parseFloat(budgetInput)||0})} style={{borderRadius:14,padding:"11px 20px",whiteSpace:"nowrap"}}>保存</button>
+              </div>
+            </div>}
+            {data._settingPanel==="catBudget"&&data.budget>0&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{fontSize:".72rem",opacity:.4,marginBottom:12}}>留空则自动按比例分配</div>
               {DETAILED_CATEGORIES.expense.map(c=>{
-                const hasVal = data.catBudgets?.[c]!=null;
-                const placeholderVal = effectiveCatBudgets[c]||0;
+                const hasVal=data.catBudgets?.[c]!=null;
                 return <div key={c} className="sr">
                   <span style={{fontSize:".85rem",flex:1,display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:"1.1rem"}}>{ICONS[c]||"•"}</span>
-                    <span>{c}</span>
+                    <span style={{fontSize:"1.1rem"}}>{ICONS[c]}</span><span>{c}</span>
                   </span>
-                  <div style={{
-                    display:"flex",alignItems:"center",gap:0,
-                    background:hasVal?`${T.accent}12`:T.bg,
-                    border:`1.5px solid ${hasVal?T.accent+"40":T.text+"12"}`,
-                    borderRadius:12,overflow:"hidden",
-                    transition:"all .2s",
-                  }}>
-                    <span style={{
-                      padding:"6px 8px 6px 10px",
-                      fontSize:".78rem",
-                      color:hasVal?T.accent:T.text,
-                      opacity:hasVal?1:.35,
-                      fontWeight:500,
-                    }}>¥</span>
-                    <input
-                      type="number"
-                      value={data.catBudgets?.[c]??""}
-                      placeholder={String(placeholderVal)}
+                  <div style={{display:"flex",alignItems:"center",background:hasVal?`${T.accent}12`:T.bg,border:`1.5px solid ${hasVal?T.accent+"40":T.text+"12"}`,borderRadius:12,overflow:"hidden"}}>
+                    <span style={{padding:"6px 6px 6px 10px",fontSize:".78rem",color:hasVal?T.accent:T.text,opacity:hasVal?1:.35,fontWeight:500}}>¥</span>
+                    <input type="number" value={data.catBudgets?.[c]??""} placeholder={String(effectiveCatBudgets[c]||0)}
                       onChange={e=>{const v=parseFloat(e.target.value);upd({catBudgets:{...(data.catBudgets||{}),[c]:isNaN(v)?undefined:v}});}}
-                      style={{
-                        width:72,background:"transparent",border:"none",
-                        padding:"6px 10px 6px 0",fontSize:".88rem",
-                        color:hasVal?T.accent:T.text,
-                        outline:"none",textAlign:"right",fontWeight:hasVal?600:400,
-                      }}
-                    />
+                      style={{width:72,background:"transparent",border:"none",padding:"6px 10px 6px 0",fontSize:".88rem",color:hasVal?T.accent:T.text,outline:"none",textAlign:"right",fontWeight:hasVal?600:400}}/>
                   </div>
                 </div>;
               })}
-              <button onClick={()=>upd({catBudgets:{}})} style={{
-                marginTop:14,background:`${T.accent}10`,
-                border:`1px solid ${T.accent}25`,
-                borderRadius:10,padding:"7px 16px",
-                fontSize:".72rem",color:T.accent,
-                cursor:"pointer",opacity:.8,fontWeight:500,
-              }}>↺ 重置为自动分配</button>
-            </div>
-          </div>}
-          <div className="ss">
-            <div className="ss-t">主题配色</div>
-            <div className="tds">
-              <div className={`td${data.theme===-1?" active":""}`} style={{background:"linear-gradient(135deg,#fff 50%,#1a1a20 50%)",border:data.theme===-1?`3px solid ${T.accent}`:"3px solid transparent"}} onClick={()=>upd({theme:-1})} title="跟随系统"/>
-              {THEMES.map((t,i)=><div key={i} className={`td${data.theme===i?" active":""}`} style={{background:t.accent}} onClick={()=>upd({theme:i})} title={t.name}/>)}
-            </div>
-            <div style={{fontSize:".65rem",opacity:.35,marginTop:8}}>{data.theme===-1?`跟随系统（当前：${sysDark?"深色":"浅色"}）`:THEMES[data.theme]?.name}</div>
-            {/* 自定义背景图片 */}
-            <div style={{marginTop:16,borderTop:`1px solid ${T.text}08`,paddingTop:16}}>
-              <div style={{fontSize:".68rem",letterSpacing:".14em",opacity:.55,textTransform:"uppercase",marginBottom:10,fontWeight:600}}>自定义背景</div>
-              <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:data.bgImage?12:0}}>
-                <label style={{background:T.accent+"14",border:`1.5px solid ${T.accent}35`,borderRadius:10,padding:"7px 14px",fontSize:".78rem",color:T.accent,cursor:"pointer",fontWeight:500}}>
-                  🖼 {data.bgImage?"更换图片":"上传背景图"}
-                  <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{
-                    const file=e.target.files[0];
-                    if(!file) return;
-                    const reader=new FileReader();
-                    reader.onload=ev=>upd({bgImage:ev.target.result});
-                    reader.readAsDataURL(file);
-                    e.target.value="";
-                  }}/>
-                </label>
-                {data.bgImage&&<button onClick={()=>upd({bgImage:"",bgOpacity:0.12})} style={{background:"none",border:`1px solid ${T.text}20`,borderRadius:10,padding:"7px 12px",fontSize:".78rem",opacity:.5,cursor:"pointer",color:T.text}}>移除</button>}
-              </div>
-              {data.bgImage&&<>
-                <div style={{borderRadius:12,overflow:"hidden",marginBottom:10,height:80,position:"relative"}}>
-                  <img src={data.bgImage} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                  <div style={{position:"absolute",inset:0,background:`rgba(255,255,255,${1-(data.bgOpacity??0.12)})`,pointerEvents:"none"}}/>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontSize:".68rem",opacity:.45,whiteSpace:"nowrap"}}>图片透明度</span>
-                  <input type="range" min="0.04" max="0.55" step="0.01"
-                    value={data.bgOpacity??0.12}
-                    onChange={e=>upd({bgOpacity:parseFloat(e.target.value)})}
-                    style={{flex:1,accentColor:T.accent}}
-                  />
-                  <span style={{fontSize:".68rem",opacity:.45,whiteSpace:"nowrap",minWidth:28}}>{Math.round((data.bgOpacity??0.12)*100)}%</span>
-                </div>
-                <div style={{fontSize:".62rem",opacity:.3,marginTop:4}}>数值越小图片越淡</div>
-              </>}
-            </div>
-          </div>
-          <div className="ss">
-            <div className="ss-t">定期账单</div>
-            <div className="sc">
+              <button onClick={()=>upd({catBudgets:{}})} style={{marginTop:12,background:`${T.accent}10`,border:`1px solid ${T.accent}25`,borderRadius:10,padding:"7px 16px",fontSize:".72rem",color:T.accent,cursor:"pointer",fontWeight:500}}>↺ 重置为自动分配</button>
+            </div>}
+            {data._settingPanel==="recurring"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
               {!(data.recurring?.length)&&<div style={{fontSize:".78rem",opacity:.4,paddingBottom:8}}>暂无定期项目</div>}
               {(data.recurring||[]).map(r=>(
                 <div key={r.id} className="sr">
@@ -945,96 +1020,209 @@ export default function App() {
                 </div>
               ))}
               <button className="ib" style={{marginTop:12}} onClick={()=>setShowRecurring(true)}>＋ 添加定期项目</button>
-            </div>
+            </div>}
           </div>
-          <div className="ss">
-            <div className="ss-t">导入账单</div>
-            <div className="sc">
-              <div style={{fontSize:".82rem",opacity:.5,marginBottom:12}}>支持微信/支付宝导出的 xlsx/csv 格式账单</div>
+
+          {/* ── 个性化 ── */}
+          <div className="ss-t">个性化</div>
+          <div className="sc" style={{marginBottom:20}}>
+            {[
+              {icon:"🎨", label:"主题配色", value:data.theme===-1?`跟随系统`:THEMES[data.theme]?.name||"", key:"theme"},
+              {icon:"🖼", label:"背景图片", value:data.bgImage?"已设置":"未设置", key:"bgImage"},
+              {icon:"➕", label:"按钮位置", value:{"left-top":"左上角","right-top":"右上角","left-middle":"左中","right-middle":"右中","left-bottom":"左下角","right-bottom":"右下角"}[data.fabPos||"right-bottom"], key:"fabPos"},
+            ].map(({icon,label,value,key})=>(
+              <div key={key} className="sr"
+                onClick={()=>upd({_settingPanel:key===data._settingPanel?null:key})}>
+                <span style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+                  <span style={{fontSize:"1.1rem",width:28,textAlign:"center"}}>{icon}</span>
+                  <span style={{fontSize:".92rem"}}>{label}</span>
+                </span>
+                <span style={{display:"flex",alignItems:"center",gap:6,fontSize:".78rem",opacity:.5}}>
+                  {key==="theme"&&<span style={{width:10,height:10,borderRadius:"50%",background:data.theme===-1?(sysDark?THEMES[1].accent:THEMES[0].accent):THEMES[data.theme]?.accent,display:"inline-block"}}/>}
+                  {key==="bgImage"&&data.bgImage&&<span style={{width:16,height:16,borderRadius:4,backgroundImage:`url(${data.bgImage})`,backgroundSize:"cover",display:"inline-block"}}/>}
+                  {value}
+                  <span style={{fontSize:".75rem",opacity:.6,transform:data._settingPanel===key?"rotate(90deg)":"rotate(0deg)",transition:"transform .2s",display:"inline-block"}}>›</span>
+                </span>
+              </div>
+            ))}
+            {/* 主题展开 */}
+            {data._settingPanel==="theme"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div className="tds">
+                <div className={`td${data.theme===-1?" active":""}`} style={{background:"linear-gradient(135deg,#fff 50%,#1a1a20 50%)",border:data.theme===-1?`3px solid ${T.accent}`:"3px solid transparent"}} onClick={()=>upd({theme:-1})} title="跟随系统"/>
+                {THEMES.map((t,i)=><div key={i} className={`td${data.theme===i?" active":""}`} style={{background:t.accent}} onClick={()=>upd({theme:i})} title={t.name}/>)}
+              </div>
+              <div style={{fontSize:".65rem",opacity:.35,marginTop:8}}>{data.theme===-1?`跟随系统（当前：${sysDark?"深色":"浅色"}）`:THEMES[data.theme]?.name}</div>
+            </div>}
+            {/* 背景图展开 */}
+            {data._settingPanel==="bgImage"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:data.bgImage?12:0}}>
+                <label style={{background:T.accent+"14",border:`1.5px solid ${T.accent}35`,borderRadius:10,padding:"7px 14px",fontSize:".78rem",color:T.accent,cursor:"pointer",fontWeight:500}}>
+                  🖼 {data.bgImage?"更换图片":"上传背景图"}
+                  <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{
+                    const file=e.target.files[0]; if(!file) return;
+                    const reader=new FileReader();
+                    reader.onload=ev=>upd({bgImage:ev.target.result});
+                    reader.readAsDataURL(file); e.target.value="";
+                  }}/>
+                </label>
+                {data.bgImage&&<button onClick={()=>upd({bgImage:"",bgOpacity:0.12})} style={{background:"none",border:`1px solid ${T.text}20`,borderRadius:10,padding:"7px 12px",fontSize:".78rem",opacity:.5,cursor:"pointer",color:T.text}}>移除</button>}
+              </div>
+              {data.bgImage&&<>
+                <div style={{borderRadius:12,overflow:"hidden",marginBottom:10,height:72,position:"relative"}}>
+                  <img src={data.bgImage} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  <div style={{position:"absolute",inset:0,background:`rgba(255,255,255,${1-(data.bgOpacity??0.12)})`,pointerEvents:"none"}}/>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:".68rem",opacity:.45,whiteSpace:"nowrap"}}>透明度</span>
+                  <input type="range" min="0.04" max="0.55" step="0.01"
+                    value={data.bgOpacity??0.12} onChange={e=>upd({bgOpacity:parseFloat(e.target.value)})}
+                    style={{flex:1,accentColor:T.accent}}/>
+                  <span style={{fontSize:".68rem",opacity:.45,minWidth:28}}>{Math.round((data.bgOpacity??0.12)*100)}%</span>
+                </div>
+              </>}
+            </div>}
+            {/* 按钮位置展开 */}
+            {data._settingPanel==="fabPos"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{position:"relative",width:110,height:190,margin:"0 auto 12px",border:`2px solid ${T.text}20`,borderRadius:18,background:T.bg,overflow:"hidden"}}>
+                <div style={{position:"absolute",top:6,left:"50%",transform:"translateX(-50%)",width:28,height:5,background:T.text+"20",borderRadius:99}}/>
+                <div style={{position:"absolute",bottom:5,left:"50%",transform:"translateX(-50%)",width:32,height:3,background:T.text+"20",borderRadius:99}}/>
+                {[["left-top",{top:22,left:8}],["right-top",{top:22,right:8}],["left-middle",{top:"50%",left:8,transform:"translateY(-50%)"}],["right-middle",{top:"50%",right:8,transform:"translateY(-50%)"}],["left-bottom",{bottom:22,left:8}],["right-bottom",{bottom:22,right:8}]].map(([pos,style])=>(
+                  <div key={pos} onClick={()=>upd({fabPos:pos})} style={{position:"absolute",...style,width:22,height:22,borderRadius:"50%",background:data.fabPos===pos?`linear-gradient(135deg,${T.accent},${T.accent}cc)`:T.text+"12",border:`1.5px solid ${data.fabPos===pos?T.accent+"80":T.text+"20"}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:".6rem",color:data.fabPos===pos?"#fff":T.text+"50",fontWeight:700,transition:"all .2s",boxShadow:data.fabPos===pos?`0 2px 8px ${T.accent}50`:"none"}}>＋</div>
+                ))}
+              </div>
+              <div style={{textAlign:"center",fontSize:".75rem",color:T.accent,fontWeight:600}}>
+                {{"left-top":"左上角","right-top":"右上角","left-middle":"左侧中间","right-middle":"右侧中间","left-bottom":"左下角","right-bottom":"右下角"}[data.fabPos||"right-bottom"]}
+              </div>
+            </div>}
+          </div>
+
+          {/* ── 数据管理 ── */}
+          <div className="ss-t">数据管理</div>
+          <div className="sc" style={{marginBottom:20}}>
+            {[
+              {icon:"📥", label:"导入账单", value:"微信/支付宝", key:"import"},
+              {icon:"📤", label:"导出账单", value:"CSV 格式", key:"export"},
+              {icon:"📦", label:"备份数据", value:"全量 JSON", key:"backup"},
+              {icon:"🔁", label:"恢复数据", value:"导入备份", key:"restore"},
+              {icon:"🎉", label:"娱乐基金", value:`¥${(data.funFund||0).toFixed(2)}`, key:"funFund"},
+            ].map(({icon,label,value,key})=>(
+              <div key={key} className="sr"
+                onClick={()=>upd({_settingPanel:key===data._settingPanel?null:key})}>
+                <span style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+                  <span style={{fontSize:"1.1rem",width:28,textAlign:"center"}}>{icon}</span>
+                  <span style={{fontSize:".92rem"}}>{label}</span>
+                </span>
+                <span style={{display:"flex",alignItems:"center",gap:6,fontSize:".78rem",opacity:.5}}>
+                  {value}
+                  <span style={{fontSize:".75rem",opacity:.6,transform:data._settingPanel===key?"rotate(90deg)":"rotate(0deg)",transition:"transform .2s",display:"inline-block"}}>›</span>
+                </span>
+              </div>
+            ))}
+            {/* 备份展开 */}
+            {data._settingPanel==="backup"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{fontSize:".78rem",opacity:.45,marginBottom:12}}>
+                将所有数据（账单、愿望、目标、个性化设置）打包为 JSON 文件保存到本地
+              </div>
+              <button className="ib" onClick={()=>{
+                const backup = {
+                  ...data,
+                  _backupVersion: 1,
+                  _backupTime: new Date().toISOString(),
+                };
+                // 移除临时 UI 状态
+                delete backup._settingPanel;
+                const json = JSON.stringify(backup, null, 2);
+                const blob = new Blob([json], {type:"application/json"});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `Kachingy_备份_${new Date().toLocaleDateString("zh-CN").replace(/\//g,"-")}.json`;
+                document.body.appendChild(a); a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}>
+                📦 立即备份
+              </button>
+              <div style={{fontSize:".65rem",opacity:.3,marginTop:8}}>建议定期备份，清除浏览器数据前务必先备份</div>
+            </div>}
+
+            {/* 恢复展开 */}
+            {data._settingPanel==="restore"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{fontSize:".78rem",opacity:.45,marginBottom:12}}>
+                选择之前导出的 JSON 备份文件，将完全恢复所有数据和设置
+              </div>
+              <label className="ib" style={{background:"#e07a9514",borderColor:"#e07a9530",color:"#d4688a"}}>
+                🔁 选择备份文件
+                <input type="file" accept=".json" style={{display:"none"}} onChange={e=>{
+                  const file = e.target.files[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = ev => {
+                    try {
+                      const parsed = JSON.parse(ev.target.result);
+                      // 验证是否是有效备份
+                      if (!parsed.entries || !Array.isArray(parsed.entries)) {
+                        alert("文件格式不正确，请选择 Kachingy 导出的备份文件");
+                        return;
+                      }
+                      if (window.confirm(`确认恢复备份？
+备份时间：${parsed._backupTime ? new Date(parsed._backupTime).toLocaleString("zh-CN") : "未知"}
+包含 ${parsed.entries.length} 条账单记录
+
+⚠️ 当前数据将被覆盖`)) {
+                        // 清除临时字段
+                        delete parsed._backupVersion;
+                        delete parsed._backupTime;
+                        delete parsed._settingPanel;
+                        setData({...defaults(), ...parsed});
+                        alert("✅ 恢复成功！");
+                      }
+                    } catch(err) {
+                      alert("读取失败：" + err.message);
+                    }
+                  };
+                  reader.readAsText(file);
+                  e.target.value = "";
+                }}/>
+              </label>
+              <div style={{fontSize:".65rem",opacity:.3,marginTop:8}}>恢复后当前所有数据将被替换，操作不可撤销</div>
+            </div>}
+
+            {/* 导入展开 */}
+            {data._settingPanel==="import"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{fontSize:".78rem",opacity:.45,marginBottom:12}}>支持微信/支付宝导出的 xlsx/csv 格式账单</div>
               <label className="ib">
                 {importing?"解析中…":"📂 选择账单文件"}
                 <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImport} style={{display:"none"}} disabled={importing}/>
               </label>
               {importResult&&<div className={`ir${importResult.ok?" ok":" err"}`}>{importResult.ok?"✓ ":"✗ "}{importResult.msg}</div>}
-              <div style={{marginTop:12,borderTop:`1px solid ${T.text}08`,paddingTop:12}}>
-                <div style={{fontSize:".75rem",opacity:.45,marginBottom:8}}>导出账单为 CSV 文件</div>
-                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
-                  <select value={exportMonth==="all"?"all":exportMonth.slice(0,4)} onChange={e=>{if(e.target.value==="all"){setExportMonth("all");}else{const months=[...new Set(data.entries.map(en=>en.date.slice(0,7)).filter(m=>m.startsWith(e.target.value)))].sort((a,b)=>b.localeCompare(a));setExportMonth(months[0]||e.target.value+"-01");}}} style={{flex:1,background:T.bg,border:"none",borderRadius:12,padding:"8px 12px",fontSize:".85rem",color:T.text,outline:"none"}}>
-                    <option value="all">全部</option>
-                    {[...new Set(data.entries.map(e=>e.date.slice(0,4)))].sort((a,b)=>b.localeCompare(a)).map(y=><option key={y} value={y}>{y}年</option>)}
-                  </select>
-                  {exportMonth!=="all"&&<select value={exportMonth} onChange={e=>setExportMonth(e.target.value)} style={{flex:1,background:T.bg,border:"none",borderRadius:12,padding:"8px 12px",fontSize:".85rem",color:T.text,outline:"none"}}>
-                    {[...new Set(data.entries.map(en=>en.date.slice(0,7)).filter(m=>m.startsWith(exportMonth.slice(0,4))))].sort((a,b)=>b.localeCompare(a)).map(m=><option key={m} value={m}>{m.slice(5)}月</option>)}
-                  </select>}
-                  <button className="ib" onClick={exportCSV} disabled={!data.entries.length} style={{opacity:data.entries.length?1:.4,whiteSpace:"nowrap"}}>📤 导出</button>
-                </div>
+            </div>}
+            {/* 导出展开 */}
+            {data._settingPanel==="export"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <select value={exportMonth==="all"?"all":exportMonth.slice(0,4)}
+                  onChange={e=>{if(e.target.value==="all"){setExportMonth("all");}else{const months=[...new Set(data.entries.map(en=>en.date.slice(0,7)).filter(m=>m.startsWith(e.target.value)))].sort((a,b)=>b.localeCompare(a));setExportMonth(months[0]||e.target.value+"-01");}}}
+                  style={{flex:1,background:T.bg,border:"none",borderRadius:12,padding:"8px 12px",fontSize:".85rem",color:T.text,outline:"none"}}>
+                  <option value="all">全部</option>
+                  {[...new Set(data.entries.map(e=>e.date.slice(0,4)))].sort((a,b)=>b.localeCompare(a)).map(y=><option key={y} value={y}>{y}年</option>)}
+                </select>
+                {exportMonth!=="all"&&<select value={exportMonth} onChange={e=>setExportMonth(e.target.value)} style={{flex:1,background:T.bg,border:"none",borderRadius:12,padding:"8px 12px",fontSize:".85rem",color:T.text,outline:"none"}}>
+                  {[...new Set(data.entries.map(en=>en.date.slice(0,7)).filter(m=>m.startsWith(exportMonth.slice(0,4))))].sort((a,b)=>b.localeCompare(a)).map(m=><option key={m} value={m}>{m.slice(5)}月</option>)}
+                </select>}
+                <button className="ib" onClick={exportCSV} disabled={!data.entries.length} style={{opacity:data.entries.length?1:.4,whiteSpace:"nowrap"}}>导出</button>
               </div>
-            </div>
-          </div>
-          <div className="ss">
-            <div className="ss-t">娱乐基金</div>
-            <div className="sc">
-              <div className="sr"><span style={{fontSize:".88rem"}}>当前余额</span><span style={{fontSize:".95rem",fontWeight:600,color:T.accent}}>¥{(data.funFund||0).toFixed(2)}</span></div>
-              <div className="sr"><span style={{fontSize:".75rem",opacity:.45}}>每月初自动结算上月节余或超支</span></div>
-              {data.budget>0&&<div className="sr"><span style={{fontSize:".75rem",opacity:.45}}>本月预算 ¥{data.budget}，已支出 ¥{totalExpense.toFixed(2)}，{data.budget-totalExpense>=0?`预计月底转入 ¥${(data.budget-totalExpense).toFixed(2)}`:`超支 ¥${Math.abs(data.budget-totalExpense).toFixed(2)}，月底将扣减`}</span></div>}
+            </div>}
+            {/* 娱乐基金展开 */}
+            {data._settingPanel==="funFund"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              <div className="sr"><span style={{fontSize:".85rem",opacity:.5}}>每月初自动结算上月节余或超支</span></div>
+              {data.budget>0&&<div className="sr"><span style={{fontSize:".78rem",opacity:.45}}>
+                本月预算 ¥{data.budget}，已支出 ¥{totalExpense.toFixed(2)}，
+                {data.budget-totalExpense>=0?`预计月底转入 ¥${(data.budget-totalExpense).toFixed(2)}`:`超支 ¥${Math.abs(data.budget-totalExpense).toFixed(2)}`}
+              </span></div>}
               {(data.funFund||0)>0&&<button className="ib" style={{marginTop:12,background:"#d4688a18",borderColor:"#d4688a40",color:"#d4688a"}} onClick={()=>upd({funFund:0})}>清零基金</button>}
-            </div>
+            </div>}
           </div>
-          <div className="ss">
-            <div className="ss-t">➕ 按钮位置</div>
-            <div className="sc" style={{padding:16}}>
-              {/* 手机轮廓预览框 */}
-              <div style={{
-                position:"relative",
-                width:110,height:190,
-                margin:"0 auto 16px",
-                border:`2px solid ${T.text}20`,
-                borderRadius:18,
-                background:T.bg,
-                overflow:"hidden",
-              }}>
-                {/* 刘海 */}
-                <div style={{position:"absolute",top:6,left:"50%",transform:"translateX(-50%)",width:28,height:5,background:T.text+"20",borderRadius:99}}/>
-                {/* 底部 home 条 */}
-                <div style={{position:"absolute",bottom:5,left:"50%",transform:"translateX(-50%)",width:32,height:3,background:T.text+"20",borderRadius:99}}/>
-                {/* 6个位置点 */}
-                {[
-                  ["left-top",    {top:22, left:8}],
-                  ["right-top",   {top:22, right:8}],
-                  ["left-middle", {top:"50%", left:8,  transform:"translateY(-50%)"}],
-                  ["right-middle",{top:"50%", right:8, transform:"translateY(-50%)"}],
-                  ["left-bottom", {bottom:22, left:8}],
-                  ["right-bottom",{bottom:22, right:8}],
-                ].map(([pos, style])=>(
-                  <div
-                    key={pos}
-                    onClick={()=>upd({fabPos:pos})}
-                    style={{
-                      position:"absolute",
-                      ...style,
-                      width:22,height:22,
-                      borderRadius:"50%",
-                      background:data.fabPos===pos
-                        ? `linear-gradient(135deg,${T.accent},${T.accent}cc)`
-                        : T.text+"12",
-                      border:`1.5px solid ${data.fabPos===pos?T.accent+"80":T.text+"20"}`,
-                      cursor:"pointer",
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      fontSize:".6rem",
-                      color:data.fabPos===pos?"#fff":T.text+"50",
-                      fontWeight:700,
-                      transition:"all .2s",
-                      boxShadow:data.fabPos===pos?`0 2px 8px ${T.accent}50`:"none",
-                    }}
-                  >＋</div>
-                ))}
-              </div>
-              {/* 当前位置文字说明 */}
-              <div style={{textAlign:"center",fontSize:".75rem",color:T.accent,fontWeight:600,letterSpacing:".06em"}}>
-                {{"left-top":"左上角","right-top":"右上角","left-middle":"左侧中间","right-middle":"右侧中间","left-bottom":"左下角","right-bottom":"右下角"}[data.fabPos||"right-bottom"]}
-              </div>
-            </div>
-          </div>
+
         </div>}
 
         <nav className="nav">
@@ -1143,6 +1331,75 @@ export default function App() {
                 disabled={disabled}
                 style={{opacity:disabled?.4:1,cursor:disabled?"not-allowed":"pointer",transition:"opacity .2s"}}>
                 记 录
+              </button>;
+            })()}
+          </div>
+        </div>}
+
+        {/* ── 编辑记录弹窗 ── */}
+        {editEntry&&editForm&&<div className="ov" onClick={e=>{if(e.target===e.currentTarget){setEditEntry(null);setEditForm(null);}}}>
+          <div className="mo">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+              <div className="mt" style={{margin:0}}>编辑记录</div>
+              <button onClick={()=>{if(window.confirm("确认删除这笔记录？")){delEntry(editEntry.id);setEditEntry(null);setEditForm(null);}}}
+                style={{background:"#e07a9514",border:"1px solid #e07a9530",borderRadius:10,padding:"6px 12px",fontSize:".75rem",color:"#d4688a",cursor:"pointer",fontWeight:500}}>
+                🗑 删除
+              </button>
+            </div>
+            {/* 支出/收入切换 */}
+            <div className="tt">
+              <button className={`tb${editForm.type==="expense"?" active":""}`} onClick={()=>setEditForm(f=>({...f,type:"expense",category:""}))}>支出</button>
+              <button className={`tb${editForm.type==="income"?" active":""}`} onClick={()=>setEditForm(f=>({...f,type:"income",category:""}))}>收入</button>
+            </div>
+            {/* 金额 */}
+            <div className="fg">
+              <div className="fl">金额</div>
+              <div style={{display:"flex",alignItems:"center",background:T.bg,borderRadius:16,overflow:"hidden"}}>
+                <span style={{padding:"13px 4px 13px 16px",fontSize:"1.4rem",fontWeight:600,color:editForm.amount?T.accent:T.text,opacity:editForm.amount?1:.28,lineHeight:1,fontFamily:"'Kaisei Opti',serif"}}>¥</span>
+                <input type="number" inputMode="decimal" autoFocus
+                  value={editForm.amount} onChange={e=>setEditForm(f=>({...f,amount:e.target.value}))}
+                  style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"13px 16px 13px 4px",fontSize:"1.4rem",fontWeight:600,color:T.text}}/>
+              </div>
+            </div>
+            {/* 分类 */}
+            <div className="fg">
+              <div className="fl">分类</div>
+              <div className="cg">
+                {cats[editForm.type].map(c=>(
+                  <button key={c} className={`cbtn${editForm.category===c?" active":""}`}
+                    onClick={()=>setEditForm(f=>({...f,category:c}))}>
+                    {ICONS[c]} {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* 日期 */}
+            <div className="fg">
+              <div className="fl">日期</div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {[{label:"今天",val:new Date().toISOString().slice(0,10)},{label:"昨天",val:new Date(Date.now()-86400000).toISOString().slice(0,10)}].map(({label,val})=>(
+                  <button key={label} onClick={()=>setEditForm(f=>({...f,date:val}))}
+                    style={{padding:"8px 14px",borderRadius:99,border:`1.5px solid ${editForm.date===val?T.accent:T.text+"15"}`,background:editForm.date===val?`${T.accent}18`:"transparent",color:editForm.date===val?T.accent:T.text,fontSize:".78rem",fontWeight:editForm.date===val?600:400,cursor:"pointer",whiteSpace:"nowrap"}}>
+                    {label}
+                  </button>
+                ))}
+                <input className="fi" type="date" value={editForm.date}
+                  onChange={e=>setEditForm(f=>({...f,date:e.target.value}))}
+                  style={{flex:1,padding:"8px 12px",fontSize:".82rem"}}/>
+              </div>
+            </div>
+            {/* 备注 */}
+            <div className="fg">
+              <div className="fl">备注</div>
+              <input className="fi" placeholder="可选" value={editForm.note}
+                onChange={e=>setEditForm(f=>({...f,note:e.target.value}))}/>
+            </div>
+            {(()=>{
+              const disabled = !editForm.amount || !editForm.category;
+              return <button className="abtn" onClick={saveEditEntry}
+                disabled={disabled}
+                style={{opacity:disabled?.4:1,cursor:disabled?"not-allowed":"pointer"}}>
+                保 存
               </button>;
             })()}
           </div>
