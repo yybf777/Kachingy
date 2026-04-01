@@ -30,7 +30,7 @@ const ALIPAY_MAP = {
 };
 
 function defaults() {
-  return { entries:[], budget:0, theme:0, mode:"detailed", funFund:0, funFundSettled:[], goals:[], recurring:[], yearGoal:null, catBudgets:{}, fabPos:"right-bottom" };
+  return { entries:[], budget:0, theme:0, mode:"detailed", funFund:0, funFundSettled:[], goals:[], recurring:[], yearGoal:null, catBudgets:{}, fabPos:"right-bottom", showCatBudget:true };
 }
 function loadData() {
   try {
@@ -399,7 +399,7 @@ export default function App() {
   monthEntries.filter(e=>e.type==="expense").forEach(e=>{ catTotals[e.category]=(catTotals[e.category]||0)+e.amount; });
 
   function getEffectiveCatBudgets() {
-    if (!data.budget) return {};
+    if (!data.budget || !data.showCatBudget) return {};
     const cs = Object.keys(catTotals);
     if (!cs.length) return {};
     const total = Object.values(catTotals).reduce((s,v)=>s+v,0)||1;
@@ -660,7 +660,7 @@ export default function App() {
             <span style={{position:"absolute",right:16,top:"50%",transform:"translateY(-50%)",fontSize:"2rem",opacity:.35}}>{fundEmoji}</span>
           </div>}
           {Object.keys(catTotals).length>0 && <div className="cb">
-            <div className="stit">分类支出{data.budget>0?" vs 预算":""}</div>
+            <div className="stit">分类支出{data.budget>0&&data.showCatBudget?" vs 预算":""}</div>
             {Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([c,actual])=>{
               const budget=effectiveCatBudgets[c]||0;
               // 该分类所有账目，按金额从高到低
@@ -983,7 +983,11 @@ export default function App() {
               },
               {
                 icon:"📊", label:"分类预算",
-                value:(()=>{const n=Object.keys(data.catBudgets||{}).filter(k=>data.catBudgets[k]!=null).length;return n>0?`已设置 ${n} 项`:"自动分配";})(),
+                value:(()=>{
+                  if(!data.showCatBudget) return "已关闭";
+                  const n=Object.keys(data.catBudgets||{}).filter(k=>data.catBudgets[k]!=null).length;
+                  return n>0?`已设置 ${n} 项`:"自动分配";
+                })(),
                 key:"catBudget",
                 disabled:!data.budget,
               },
@@ -1025,6 +1029,15 @@ export default function App() {
               </div>
             </div>}
             {data._settingPanel==="catBudget"&&data.budget>0&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
+              {/* 开关 */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <span style={{fontSize:".85rem"}}>启用分类预算</span>
+                <div onClick={()=>upd({showCatBudget:!data.showCatBudget})}
+                  style={{width:44,height:26,borderRadius:99,background:data.showCatBudget?T.accent:T.text+"20",position:"relative",cursor:"pointer",transition:"background .2s"}}>
+                  <div style={{position:"absolute",top:3,left:data.showCatBudget?20:3,width:20,height:20,borderRadius:"50%",background:"#fff",boxShadow:"0 1px 4px rgba(0,0,0,.2)",transition:"left .2s"}}/>
+                </div>
+              </div>
+              {data.showCatBudget&&<>
               <div style={{fontSize:".72rem",opacity:.4,marginBottom:12}}>留空则自动按比例分配</div>
               {DETAILED_CATEGORIES.expense.map(c=>{
                 const hasVal=data.catBudgets?.[c]!=null;
@@ -1041,6 +1054,7 @@ export default function App() {
                 </div>;
               })}
               <button onClick={()=>upd({catBudgets:{}})} style={{marginTop:12,background:`${T.accent}10`,border:`1px solid ${T.accent}25`,borderRadius:10,padding:"7px 16px",fontSize:".72rem",color:T.accent,cursor:"pointer",fontWeight:500}}>↺ 重置为自动分配</button>
+              </>}
             </div>}
             {data._settingPanel==="recurring"&&<div style={{padding:"14px 0 4px",borderTop:`1px solid ${T.text}08`}}>
               {!(data.recurring?.length)&&<div style={{fontSize:".78rem",opacity:.4,paddingBottom:8}}>暂无定期项目</div>}
