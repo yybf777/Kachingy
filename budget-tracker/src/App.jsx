@@ -30,7 +30,7 @@ const ALIPAY_MAP = {
 };
 
 function defaults() {
-  return { entries:[], budget:0, theme:0, mode:"detailed", funFund:0, goals:[], recurring:[], yearGoal:null, catBudgets:{}, fabPos:"right-bottom" };
+  return { entries:[], budget:0, theme:0, mode:"detailed", funFund:0, funFundSettled:[], goals:[], recurring:[], yearGoal:null, catBudgets:{}, fabPos:"right-bottom" };
 }
 function loadData() {
   try {
@@ -89,12 +89,26 @@ export default function App() {
 
   useEffect(() => {
     if (!data.recurring?.length) return;
-    const m = new Date().toISOString().slice(0,7);
-    const toAdd = data.recurring.filter(r => !data.entries.some(e => e.recurringId===r.id && e.date.startsWith(m))).map(r => {
-      const days = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
-      const d = String(Math.min(r.day, days)).padStart(2,"0");
-      return { id:Date.now()+Math.random(), type:r.type, amount:r.amount, category:r.category, note:r.name, date:`${m}-${d}`, recurringId:r.id, auto:true };
-    });
+    const now = new Date();
+    const m = now.toISOString().slice(0,7);
+    const todayDay = now.getDate(); // 今天是几号
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+
+    // 只触发"今天应该扣款"的定期项目
+    // 规则：r.day <= 今天，且本月还没有这条记录
+    const toAdd = data.recurring
+      .filter(r => {
+        const targetDay = Math.min(r.day, daysInMonth);
+        // 今天 >= 扣款日，且本月还没有这条记录
+        return todayDay >= targetDay &&
+          !data.entries.some(e => e.recurringId===r.id && e.date.startsWith(m));
+      })
+      .map(r => {
+        const d = String(Math.min(r.day, daysInMonth)).padStart(2,"0");
+        return { id:Date.now()+Math.random(), type:r.type, amount:r.amount,
+          category:r.category, note:r.name, date:`${m}-${d}`, recurringId:r.id, auto:true };
+      });
+
     if (toAdd.length) setData(d => ({...d, entries:[...toAdd,...d.entries]}));
   }, []);
 
@@ -102,12 +116,21 @@ export default function App() {
     if (!data.budget) return;
     const now = new Date();
     const lm = new Date(now.getFullYear(), now.getMonth()-1, 1).toISOString().slice(0,7);
-    const key = `settled-${lm}`;
-    if (data[key]) return;
+    // 用专门的数组记录已结算月份，不用动态 key（动态 key 容易被 defaults 覆盖丢失）
+    const settled = data.funFundSettled || [];
+    if (settled.includes(lm)) return;
     const lmExp = data.entries.filter(e => e.date.startsWith(lm) && e.type==="expense").reduce((s,e) => s+e.amount, 0);
     const diff = data.budget - lmExp;
-    if (diff===0) return;
-    setData(d => ({...d, funFund:Math.max(0,(d.funFund||0)+diff), [key]:true}));
+    if (diff === 0) {
+      // diff 为 0 也要标记已结算，否则每次打开都会重新检查
+      setData(d => ({...d, funFundSettled:[...(d.funFundSettled||[]), lm]}));
+      return;
+    }
+    setData(d => ({
+      ...d,
+      funFund: Math.max(0, (d.funFund||0) + diff),
+      funFundSettled: [...(d.funFundSettled||[]), lm],
+    }));
   }, []);
 
   useEffect(() => {
