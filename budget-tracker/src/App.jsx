@@ -79,6 +79,7 @@ export default function App() {
   const [sysDark, setSysDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [showNote, setShowNote] = useState(false); // 备注默认收起
   const [searchQuery, setSearchQuery] = useState(""); // 账单搜索
+  const [fundInput, setFundInput] = useState(""); // 娱乐基金手动设置
   const [editEntry, setEditEntry] = useState(null); // 正在编辑的条目
   const [editForm, setEditForm] = useState(null);   // 编辑表单数据
   // 分类下钻：expandedCat = 当前展开的分类名，excludedIds = 被屏蔽的条目id集合
@@ -1252,7 +1253,24 @@ export default function App() {
                 本月预算 ¥{data.budget}，已支出 ¥{totalExpense.toFixed(2)}，
                 {data.budget-totalExpense>=0?`预计月底转入 ¥${(data.budget-totalExpense).toFixed(2)}`:`超支 ¥${Math.abs(data.budget-totalExpense).toFixed(2)}`}
               </span></div>}
-              {(data.funFund||0)>0&&<button className="ib" style={{marginTop:12,background:"#d4688a18",borderColor:"#d4688a40",color:"#d4688a"}} onClick={()=>upd({funFund:0})}>清零基金</button>}
+              {/* 手动调整余额 */}
+              <div style={{marginTop:12,display:"flex",gap:8,alignItems:"center"}}>
+                <div style={{flex:1,display:"flex",alignItems:"center",background:T.bg,border:`1.5px solid ${T.text}12`,borderRadius:12,overflow:"hidden"}}>
+                  <span style={{padding:"8px 6px 8px 12px",fontSize:".88rem",opacity:.4}}>¥</span>
+                  <input type="number" inputMode="decimal"
+                    placeholder={`当前 ${(data.funFund||0).toFixed(2)}`}
+                    value={fundInput}
+                    onChange={e=>setFundInput(e.target.value)}
+                    style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"8px 12px 8px 0",fontSize:".88rem",color:T.text}}/>
+                </div>
+                <button className="sbt" style={{borderRadius:12,padding:"9px 16px",whiteSpace:"nowrap"}}
+                  onClick={()=>{
+                    const v=parseFloat(fundInput);
+                    if(!isNaN(v)&&v>=0){upd({funFund:v});setFundInput("");}
+                  }}>设置</button>
+              </div>
+              <div style={{fontSize:".65rem",opacity:.35,marginTop:6}}>可手动修正余额，例如补录之前遗漏的节余</div>
+              {(data.funFund||0)>0&&<button className="ib" style={{marginTop:10,background:"#d4688a18",borderColor:"#d4688a40",color:"#d4688a"}} onClick={()=>upd({funFund:0})}>清零基金</button>}
             </div>}
           </div>
 
