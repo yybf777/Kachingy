@@ -35,7 +35,17 @@ function defaults() {
 function loadData() {
   try {
     const r = localStorage.getItem(STORAGE_KEY);
-    if (r) return {...defaults(), ...JSON.parse(r)};
+    if (r) {
+      const parsed = JSON.parse(r);
+      // 迁移旧的 settled-xxx 动态 key 到 funFundSettled 数组
+      if (!parsed.funFundSettled) {
+        const oldSettled = Object.keys(parsed)
+          .filter(k => k.startsWith("settled-"))
+          .map(k => k.replace("settled-", ""));
+        parsed.funFundSettled = oldSettled;
+      }
+      return {...defaults(), ...parsed};
+    }
   } catch {}
   return defaults();
 }
