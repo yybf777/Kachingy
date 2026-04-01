@@ -786,7 +786,7 @@ export default function App() {
                   {e.note&&<div className="eno">{e.note}</div>}
                 </div>
                 <div className="er"><div className={`ea ${e.type}`}>{e.type==="expense"?"-":"+"}¥{e.amount.toFixed(2)}</div><div className="ed">{e.date}</div></div>
-                <button className="edl" onClick={ev=>{ev.stopPropagation();delEntry(e.id);}}>×</button>
+                <button className="edl" onClick={ev=>{ev.stopPropagation();if(window.confirm(`确认删除这笔「${e.category}」¥${e.amount.toFixed(2)} 的记录？`)){delEntry(e.id);}}}>×</button>
               </div>
             ))}
           </div>
